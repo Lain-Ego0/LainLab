@@ -111,25 +111,25 @@ def _configure_getup_rewards(
   cfg: ManagerBasedRlEnvCfg, *, base_height_target: float
 ) -> None:
   cfg.rewards = {
-    "upright": RewardTermCfg(func=getup_rewards.upright_linear, weight=2.0),
+    "upright": RewardTermCfg(func=getup_rewards.upright_linear, weight=4.0),
     "base_height": RewardTermCfg(
       func=getup_rewards.base_height_tracking,
-      weight=2.5,
+      weight=5.0,
       params={"target_height": base_height_target},
     ),
-    "torques": RewardTermCfg(func=envs_mdp.joint_torques_l2, weight=-0.0004),
-    "dof_vel": RewardTermCfg(func=getup_rewards.joint_vel_l1, weight=-0.005),
-    "joint_power": RewardTermCfg(func=getup_rewards.joint_power_l1, weight=-0.0002),
-    "action_rate": RewardTermCfg(func=envs_mdp.action_rate_l2, weight=-0.05),
-    "dof_acc": RewardTermCfg(func=envs_mdp.joint_acc_l2, weight=-5.0e-7),
-    "ang_vel_xy": RewardTermCfg(func=getup_rewards.gated_ang_vel_xy, weight=-0.05),
+    "torques": RewardTermCfg(func=envs_mdp.joint_torques_l2, weight=-0.0002),
+    "dof_vel": RewardTermCfg(func=getup_rewards.joint_vel_l1, weight=-0.003),
+    "joint_power": RewardTermCfg(func=getup_rewards.joint_power_l1, weight=-0.0001),
+    "action_rate": RewardTermCfg(func=envs_mdp.action_rate_l2, weight=-0.02),
+    "dof_acc": RewardTermCfg(func=envs_mdp.joint_acc_l2, weight=-1.5e-7),
+    "ang_vel_xy": RewardTermCfg(func=getup_rewards.gated_ang_vel_xy, weight=-0.03),
     "impact": RewardTermCfg(
       func=getup_rewards.impact,
-      weight=-1.0,
+      weight=-0.5,
       params={"target_height": base_height_target},
     ),
-    "default_pos": RewardTermCfg(func=getup_rewards.default_pos_l1, weight=-0.15),
-    "termination": RewardTermCfg(func=getup_rewards.getup_failure, weight=-5.0),
+    "default_pos": RewardTermCfg(func=getup_rewards.default_pos_l1, weight=-0.08),
+    "termination": RewardTermCfg(func=getup_rewards.getup_failure, weight=-7.0),
     "dof_pos_limits": RewardTermCfg(func=envs_mdp.joint_pos_limits, weight=-1.0),
   }
 
