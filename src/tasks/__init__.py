@@ -16,4 +16,5 @@ from .robots import unitree as unitree
 unitree.register_velocity_tasks()
 go2.register_tasks()
 opendoge.register_velocity_tasks()
+opendoge.register_getup_tasks()
 g1.register_tracking_tasks()
