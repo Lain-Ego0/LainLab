@@ -22,9 +22,10 @@ def base_height_tracking(
   target_height: float,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Track the standing root height instead of rewarding unbounded height."""
+  """Track root height relative to the local terrain origin."""
   asset: Entity = env.scene[asset_cfg.name]
-  return -torch.abs(asset.data.root_link_pos_w[:, 2] - target_height)
+  height = asset.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+  return -torch.abs(height - target_height)
 
 
 def joint_vel_l1(
@@ -78,7 +79,7 @@ def impact(
 ) -> torch.Tensor:
   """Penalize downward root velocity near the standing height."""
   asset: Entity = env.scene[asset_cfg.name]
-  height = asset.data.root_link_pos_w[:, 2]
+  height = asset.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
   near_target = torch.exp(-torch.square((height - target_height) / 0.06))
   downward_velocity = torch.clamp(-asset.data.root_link_lin_vel_w[:, 2], min=0.0)
   return downward_velocity * near_target
