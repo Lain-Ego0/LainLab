@@ -114,7 +114,7 @@ def _configure_getup_rewards(
     "upright": RewardTermCfg(func=getup_rewards.upright_linear, weight=4.0),
     "base_height": RewardTermCfg(
       func=getup_rewards.base_height_tracking,
-      weight=5.0,
+      weight=8.0,
       params={"target_height": base_height_target},
     ),
     "torques": RewardTermCfg(func=envs_mdp.joint_torques_l2, weight=-0.0002),
@@ -128,7 +128,7 @@ def _configure_getup_rewards(
       weight=-0.5,
       params={"target_height": base_height_target},
     ),
-    "default_pos": RewardTermCfg(func=getup_rewards.default_pos_l1, weight=-0.08),
+    "default_pos": RewardTermCfg(func=getup_rewards.default_pos_l1, weight=-0.12),
     "termination": RewardTermCfg(func=getup_rewards.getup_failure, weight=-7.0),
     "dof_pos_limits": RewardTermCfg(func=envs_mdp.joint_pos_limits, weight=-1.0),
   }
