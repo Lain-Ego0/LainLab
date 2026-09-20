@@ -121,7 +121,7 @@ npm run dev
 
 `csv-to-npz` 直接在本地生成 NPZ，不需要 Weights & Biases。`--output-name` 只传文件名时，输出会保存到输入 CSV 的同一目录；也可传入完整路径。G1-23DoF 动作使用 `--robot g1_23dof`。
 
-任务命名统一使用分类前缀，例如 `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` 和 `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`。OpenDoge 属于自研机器人，归入 `LainLab` 分类，提供 Flat、Rough 和 Getup 版本。速度任务支持 A2、As2、Go2、OpenDoge、G1、G1-23Dof、H1_2、H2 和 R1；动作跟踪任务支持 G1 与 G1-23Dof；当前倒地自恢复任务为 `LainLab-OpenDoge-Getup`。
+任务命名统一使用分类前缀，例如 `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` 和 `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`。OpenDoge 属于自研机器人，归入 `LainLab` 分类，提供 Flat、Rough 和 Getup 版本。速度任务支持 A2、As2、Go2、OpenDoge、G1、G1-23Dof、H1_2、H2 和 R1；动作跟踪任务支持 G1 与 G1-23Dof；当前平地倒地自恢复任务为 `LainLab-OpenDoge-Getup`。
 
 ## 运行验证与已知限制
 
@@ -238,7 +238,7 @@ uv run csv-to-npz --input-file src/assets/motions/g1/dance1_subject2.csv \
 
 `csv-to-npz` creates an NPZ locally and does not require Weights & Biases. If `--output-name` is only a filename, the output is written next to the input CSV; an absolute or relative output path may also be used. Use `--robot g1_23dof` for G1-23DoF motions.
 
-Tasks use a category prefix, for example `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` and `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`. OpenDoge is an in-house robot and belongs to `LainLab`; Flat, Rough, and Getup variants are registered. Velocity tasks support A2, As2, Go2, OpenDoge, G1, G1-23Dof, H1_2, H2, and R1. Motion tracking tasks support G1 and G1-23Dof. The current fall-recovery task is `LainLab-OpenDoge-Getup`.
+Tasks use a category prefix, for example `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` and `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`. OpenDoge is an in-house robot and belongs to `LainLab`; Flat, Rough, and Getup variants are registered. Velocity tasks support A2, As2, Go2, OpenDoge, G1, G1-23Dof, H1_2, H2, and R1. Motion tracking tasks support G1 and G1-23Dof. The current flat-ground fall-recovery task is `LainLab-OpenDoge-Getup`.
 
 ## Validation status and known limitations
 

@@ -24,13 +24,13 @@ def test_opendoge_getup_config() -> None:
   assert command.ranges.heading is None
 
   assert cfg.scene.terrain is not None
-  generator = cfg.scene.terrain.terrain_generator
-  assert generator is not None
-  assert generator.curriculum is False
-  assert generator.difficulty_range == (0.0, 0.6)
+  assert cfg.scene.terrain.terrain_type == "plane"
+  assert cfg.scene.terrain.terrain_generator is None
+  assert "height_scan" not in cfg.observations["actor"].terms
+  assert "height_scan" not in cfg.observations["critic"].terms
+  assert set(cfg.terminations) == {"time_out"}
 
   assert set(cfg.events) == {
-    "randomize_terrain",
     "reset_base",
     "reset_robot_joints",
     "foot_friction",

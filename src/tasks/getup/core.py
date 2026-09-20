@@ -1,14 +1,11 @@
 """Shared fall-recovery task builder and registration."""
 
-from dataclasses import replace
-
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.tasks.registry import register_mjlab_task
-from mjlab.tasks.velocity import mdp as velocity_mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 
@@ -18,47 +15,18 @@ from src.tasks.rl import make_ppo_runner_cfg
 from src.tasks.velocity.core import VelocityRobotProfile, _make_base_env_cfg
 
 
-def _configure_getup_terrain(cfg: ManagerBasedRlEnvCfg) -> None:
+def _configure_flat_terrain(cfg: ManagerBasedRlEnvCfg) -> None:
   terrain = cfg.scene.terrain
-  if terrain is None or terrain.terrain_generator is None:
-    raise ValueError("Get-up requires a terrain generator")
-  generator = terrain.terrain_generator
-  generator.curriculum = False
-  generator.num_rows = 4
-  generator.num_cols = 6
-  generator.size = (6.0, 6.0)
-  generator.border_width = 10.0
-  generator.difficulty_range = (0.0, 0.6)
+  if terrain is None:
+    raise ValueError("Get-up requires a terrain entity")
+  terrain.terrain_type = "plane"
+  terrain.terrain_generator = None
 
-  sub_terrains = dict(generator.sub_terrains)
-  sub_terrains["pyramid_stairs"] = replace(
-    sub_terrains["pyramid_stairs"],
-    step_height_range=(0.0, 0.06),
-    step_width=0.22,
+  cfg.scene.sensors = tuple(
+    sensor for sensor in (cfg.scene.sensors or ()) if sensor.name != "terrain_scan"
   )
-  sub_terrains["pyramid_stairs_inv"] = replace(
-    sub_terrains["pyramid_stairs_inv"],
-    step_height_range=(0.0, 0.06),
-    step_width=0.22,
-  )
-  sub_terrains["hf_pyramid_slope"] = replace(
-    sub_terrains["hf_pyramid_slope"],
-    slope_range=(0.0, 0.6),
-  )
-  sub_terrains["hf_pyramid_slope_inv"] = replace(
-    sub_terrains["hf_pyramid_slope_inv"],
-    slope_range=(0.0, 0.6),
-  )
-  sub_terrains["random_rough"] = replace(
-    sub_terrains["random_rough"],
-    noise_range=(0.01, 0.06),
-    scale_with_difficulty=True,
-  )
-  sub_terrains["wave_terrain"] = replace(
-    sub_terrains["wave_terrain"],
-    amplitude_range=(0.0, 0.12),
-  )
-  generator.sub_terrains = sub_terrains
+  cfg.observations["actor"].terms.pop("height_scan", None)
+  cfg.observations["critic"].terms.pop("height_scan", None)
 
 
 def _configure_getup_commands(cfg: ManagerBasedRlEnvCfg) -> None:
@@ -88,11 +56,6 @@ def _configure_getup_events(
     if name in cfg.events
   }
   cfg.events = {
-    "randomize_terrain": EventTermCfg(
-      func=envs_mdp.randomize_terrain,
-      mode="reset",
-      params={},
-    ),
     "reset_base": EventTermCfg(
       func=getup_events.reset_fallen_root,
       mode="reset",
@@ -142,13 +105,13 @@ def make_getup_env_cfg(
   joint_scale_range: tuple[float, float] = (0.3, 1.7),
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Build a terrain fall-recovery environment for one robot profile."""
+  """Build a flat-ground fall-recovery environment for one robot profile."""
   cfg = _make_base_env_cfg(profile)
 
   cfg.episode_length_s = 4.0
   cfg.curriculum = {}
   _configure_getup_commands(cfg)
-  _configure_getup_terrain(cfg)
+  _configure_flat_terrain(cfg)
   _configure_getup_events(
     cfg,
     fallen_height_range=fallen_height_range,
@@ -157,10 +120,6 @@ def make_getup_env_cfg(
   _configure_getup_rewards(cfg, base_height_target=base_height_target)
   cfg.terminations = {
     "time_out": TerminationTermCfg(func=envs_mdp.time_out, time_out=True),
-    "out_of_terrain_bounds": TerminationTermCfg(
-      func=velocity_mdp.out_of_terrain_bounds,
-      time_out=True,
-    ),
   }
 
   cfg.sim.nconmax = 64
