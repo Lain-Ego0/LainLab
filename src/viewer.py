@@ -14,9 +14,30 @@ class TerrainLevelViserPlayViewer(ViserPlayViewer):
   """
 
   def setup(self) -> None:
+    self._disable_zero_command_gui()
     super().setup()
     self._add_manual_control_gui()
     self._add_terrain_level_gui()
+
+  def _disable_zero_command_gui(self) -> None:
+    """Hide command sliders for command terms with an all-zero range.
+
+    Viser cannot create a slider when ``min == max == 0``. Get-up tasks keep the
+    velocity command identically zero, so skipping their GUI is both safer and
+    semantically correct.
+    """
+    command_manager = self.env.unwrapped.command_manager
+    for name in command_manager.active_terms:
+      term = command_manager.get_term(name)
+      cfg = command_manager.get_term_cfg(name)
+      ranges = getattr(cfg, "ranges", None)
+      if ranges is None:
+        continue
+      bounds = [
+        getattr(ranges, axis, None) for axis in ("lin_vel_x", "lin_vel_y", "ang_vel_z")
+      ]
+      if all(bound is not None and tuple(bound) == (0.0, 0.0) for bound in bounds):
+        setattr(term, "create_gui", lambda *args, **kwargs: None)  # noqa: B010
 
   def _add_manual_control_gui(self) -> None:
     env = self.env.unwrapped

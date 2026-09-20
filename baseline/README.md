@@ -15,6 +15,7 @@ Run a baseline directly in Viser:
 ```bash
 uv run baseline-play opendoge flat --device cuda:0 --num-envs 1
 uv run baseline-play opendoge rough --device cuda:0 --num-envs 1 --no-terminations True
+uv run baseline-play opendoge getup --device cuda:0 --num-envs 1
 ```
 
 Extra arguments after `<robot> <terrain>` are forwarded to mjlab's `play` CLI.

@@ -54,3 +54,10 @@ def test_opendoge_getup_config() -> None:
     "termination",
     "dof_pos_limits",
   }
+
+  play = load_env_cfg("LainLab-OpenDoge-Getup", play=True)
+  play_command = play.commands["twist"]
+  assert isinstance(play_command, UniformVelocityCommandCfg)
+  assert play_command.ranges.lin_vel_x == (0.0, 0.0)
+  assert play_command.ranges.lin_vel_y == (0.0, 0.0)
+  assert play_command.ranges.ang_vel_z == (0.0, 0.0)

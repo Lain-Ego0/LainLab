@@ -5,7 +5,7 @@ from src.baselines import resolve_baseline
 
 
 def test_opendoge_baselines_resolve() -> None:
-  for terrain, suffix in (("flat", "Flat"), ("rough", "Rough")):
+  for terrain, suffix in (("flat", "Flat"), ("rough", "Rough"), ("getup", "Getup")):
     baseline = resolve_baseline("opendoge", terrain)
     assert baseline.robot == "opendoge"
     assert baseline.terrain == terrain

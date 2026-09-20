@@ -72,6 +72,7 @@ uv run train LainLab-OpenDoge-Flat --env.scene.num-envs 4096
 # 直接播放内置 baseline
 uv run baseline-play opendoge flat --device cuda:0 --num-envs 1
 uv run baseline-play opendoge rough --device cuda:0 --num-envs 1 --no-terminations True
+uv run baseline-play opendoge getup --device cuda:0 --num-envs 1
 
 # 用随机动作做配置冒烟测试
 uv run play LainLab-OpenDoge-Flat --agent random --num-envs 1
@@ -224,6 +225,7 @@ uv run train LainLab-OpenDoge-Flat --env.scene.num-envs 4096
 # Play a bundled baseline directly in Viser
 uv run baseline-play opendoge flat --device cuda:0 --num-envs 1
 uv run baseline-play opendoge rough --device cuda:0 --num-envs 1 --no-terminations True
+uv run baseline-play opendoge getup --device cuda:0 --num-envs 1
 
 # Run a random-action configuration smoke test
 uv run play LainLab-OpenDoge-Flat --agent random --num-envs 1
