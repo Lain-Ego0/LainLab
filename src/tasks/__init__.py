@@ -8,6 +8,7 @@ lives under ``tasks.robots``.
 from . import amp as amp
 from . import handstand as handstand
 from . import jump as jump
+from . import recover as recover
 from . import skills as skills
 from . import tracking as tracking
 from . import velocity as velocity
@@ -22,5 +23,6 @@ opendoge.register_velocity_tasks()
 opendoge.register_getup_tasks()
 opendoge.register_handstand_tasks()
 opendoge.register_jump_tasks()
+opendoge.register_recover_tasks()
 opendoge.register_skills_tasks()
 g1.register_tracking_tasks()

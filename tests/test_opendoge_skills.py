@@ -4,6 +4,7 @@ These assert the properties the whole single-policy design rests on:
 
 - the shared proprioceptive block is preserved, with the skill block appended
 - every skill is actually sampled and gets a skill-specific reset distribution
+  (get-up always fallen, everything else standing)
 - each sub-task's rewards fire only for their own skill
 - get-up is exempt from the body-contact termination, the others are not
 """
@@ -85,10 +86,23 @@ def test_every_skill_is_sampled_and_reset_is_skill_specific() -> None:
 
     asset = env.scene["robot"]
     height = asset.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+
+    # Get-up always starts fallen.
     getup = term.skill_is("getup")
-    # Get-up must start fallen, everything else must start standing.
-    assert float(height[getup].max()) < 0.14, height[getup]
-    assert float(height[~getup].min()) > 0.13, height[~getup]
+    if bool(getup.any()):
+      assert float(height[getup].max()) < 0.14, height[getup]
+
+    # Handstand and jump always start standing.
+    for name in ("handstand", "jump"):
+      mask = term.skill_is(name)
+      if bool(mask.any()):
+        assert float(height[mask].min()) > 0.13, (name, height[mask])
+
+    # Walking starts standing. (A mixed standing/fallen start was tried for the
+    # walk skill and rejected -- see docs/opendoge_multiskill.md §5.6.)
+    walk = term.skill_is("walk")
+    if bool(walk.any()):
+      assert float(height[walk].min()) > 0.13, height[walk]
   finally:
     env.close()
 
