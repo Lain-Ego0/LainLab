@@ -1,10 +1,23 @@
 """MuJoCo Warp reset/step smoke test for completed Go2 skill tasks."""
 
+import pytest
 import src.tasks  # noqa: F401
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
 from src.tasks.robots.go2.skills.shared.contacts import source_vertical_contact
+
+
+@pytest.fixture(autouse=True)
+def _seed_domain_randomization() -> None:
+  """Seed before every test in this module.
+
+  These tests assert physical signs after settling (e.g. the vertical contact
+  sign for the jump task), and the settled outcome depends on the randomized
+  startup state. Without a per-test seed they inherit the RNG stream from
+  whatever ran earlier in the session and pass or fail by test order.
+  """
+  torch.manual_seed(0)
 
 
 def test_trot_single_environment_reset_step() -> None:
@@ -78,6 +91,13 @@ def test_dreamwaq_single_environment_reset_step() -> None:
 
 def test_jump_vertical_contact_sign_after_settling() -> None:
   cfg = load_env_cfg("Unitree-Go2-Jump-Flat", play=True)
+  # This asserts the contact-frame sign convention, not robustness to domain
+  # randomization, and only a subset of randomized startups settles into a
+  # fully loaded stance. Pin the startup randomization off so the test measures
+  # what it is named for instead of passing or failing by RNG draw.
+  cfg.events = {
+    name: term for name, term in cfg.events.items() if term.mode != "startup"
+  }
   env = ManagerBasedRlEnv(cfg, device="cpu")
   try:
     env.reset()
