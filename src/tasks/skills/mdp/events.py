@@ -45,13 +45,6 @@ class StandingReset:
   """Multiplicative joint spread; ``None`` means an additive offset is used."""
   joint_offset_range: tuple[float, float] | None = None
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
-  fallen_probability: float = 0.0
-  """Share of environments that start from a random fall instead of standing.
-
-  This is how the walk skill covers "the walk token arrived mid-manoeuvre": its
-  expert is trained from a mixed start, so the unified environment must present
-  the same distribution or the expert would be off-manifold in its own task.
-  """
 
 
 def _sample_velocity(
@@ -148,28 +141,12 @@ def reset_skill_episode(
     joint_pos, torch.zeros_like(joint_pos), env_ids=env_ids
   )
 
-  # Skills whose start distribution includes a fall overwrite the standing
-  # reset above. Get-up is the degenerate case (probability 1.0); walking uses a
-  # mixture so the policy sees both a clean stance and having to recover.
-  fallen_mask = torch.zeros(num_envs, dtype=torch.bool, device=device)
-  for name in term.skill_names:
-    mask = term.skill_is(name)[env_ids]
-    if not bool(mask.any()):
-      continue
-    probability = specs.get(name, fallback).fallen_probability
-    if probability <= 0.0:
-      continue
-    if probability >= 1.0:
-      fallen_mask |= mask
-    else:
-      draw = torch.rand(num_envs, device=device) < probability
-      fallen_mask |= mask & draw
-  fallen_ids = env_ids[fallen_mask]
-  if len(fallen_ids) == 0:
+  getup_ids = env_ids[term.skill_is("getup")[env_ids]]
+  if len(getup_ids) == 0:
     return
   reset_fallen_root(
-    env, fallen_ids, height_range=fallen_height_range, asset_cfg=asset_cfg
+    env, getup_ids, height_range=fallen_height_range, asset_cfg=asset_cfg
   )
   reset_fallen_joints(
-    env, fallen_ids, scale_range=fallen_joint_scale_range, asset_cfg=asset_cfg
+    env, getup_ids, scale_range=fallen_joint_scale_range, asset_cfg=asset_cfg
   )

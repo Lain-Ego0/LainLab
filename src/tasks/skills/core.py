@@ -66,9 +66,7 @@ def _harvest_rewards(
   return harvested
 
 
-def _harvest_standing_reset(
-  cfg: ManagerBasedRlEnvCfg, *, fallen_probability: float = 0.0
-) -> StandingReset:
+def _harvest_standing_reset(cfg: ManagerBasedRlEnvCfg) -> StandingReset:
   """Read a sub-task's standing reset instead of restating it.
 
   Either form the framework uses is supported: a multiplicative
@@ -92,7 +90,6 @@ def _harvest_standing_reset(
       else None
     ),
     velocity_range={k: tuple(v) for k, v in velocity_range.items()},
-    fallen_probability=fallen_probability,
   )
 
 
@@ -163,10 +160,6 @@ def make_skills_env_cfg(
     "walk": _harvest_standing_reset(walk_cfg),
     "handstand": _harvest_standing_reset(handstand_cfg),
     "jump": _harvest_standing_reset(jump_cfg),
-    # Get-up always starts fallen; the standing reset above is overwritten.
-    # A mixed walking start was tried and rejected: see
-    # `docs/opendoge_multiskill.md` §5.6.
-    "getup": StandingReset(fallen_probability=1.0),
   }
 
   # Flat ground, no exteroception: keeps the 48-field proprioceptive layout.
