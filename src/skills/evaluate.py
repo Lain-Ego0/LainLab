@@ -19,6 +19,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import torch
 from mjlab.envs import ManagerBasedRlEnv
@@ -65,17 +66,37 @@ def _upright(env: ManagerBasedRlEnv) -> torch.Tensor:
   return torch.clamp(robot.data.projected_gravity_b @ target, -1.0, 1.0)
 
 
-def evaluate(
+def build_policy_env(
   task_id: str,
   checkpoint: Path,
   *,
   num_envs: int,
-  steps: int,
   device: str,
-) -> dict[str, object]:
+  corruption: bool = False,
+  train_config: bool = False,
+  seed: int | None = None,
+) -> tuple[ManagerBasedRlEnv, Any]:
+  """Build the evaluation environment and load the policy.
+
+  Three measurement conditions are supported, and they isolate different things:
+
+  - default (play config): clean observations, no perturbations, no episode
+    resets -- this is what a hand-tuned demo measures
+  - ``corruption=True``: the play config with the actor's observation corruption
+    switched back on, which is what the policy saw during training and what a
+    real IMU/encoder pipeline supplies
+  - ``train_config=True``: the training config outright, adding the interval
+    push events and the 10 s episode resets
+
+  ``seed`` pins the environment randomization so repeated runs are comparable.
+  """
   configure_torch_backends()
-  cfg = load_env_cfg(task_id, play=True)
+  cfg = load_env_cfg(task_id, play=not train_config)
   cfg.scene.num_envs = num_envs
+  if seed is not None:
+    cfg.seed = seed
+  if corruption:
+    cfg.observations["actor"].enable_corruption = True
   agent_cfg = load_rl_cfg(task_id)
   env = ManagerBasedRlEnv(cfg=cfg, device=device)
   wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
@@ -84,7 +105,29 @@ def evaluate(
   runner.load(
     str(checkpoint), load_cfg={"actor": True}, strict=True, map_location=device
   )
-  policy = runner.get_inference_policy(device=device)
+  return env, runner.get_inference_policy(device=device)
+
+
+def evaluate(
+  task_id: str,
+  checkpoint: Path,
+  *,
+  num_envs: int,
+  steps: int,
+  device: str,
+  corruption: bool = False,
+  train_config: bool = False,
+  seed: int | None = None,
+) -> dict[str, object]:
+  env, policy = build_policy_env(
+    task_id,
+    checkpoint,
+    num_envs=num_envs,
+    device=device,
+    corruption=corruption,
+    train_config=train_config,
+    seed=seed,
+  )
 
   names = ["walk", "handstand", "getup", "jump"]
   per_skill: dict[str, dict[str, list]] = {
@@ -175,6 +218,7 @@ def evaluate(
     "checkpoint": str(checkpoint),
     "num_envs": num_envs,
     "steps": steps,
+    "condition": _condition_label(corruption, train_config, seed),
   }
   skill_reports: dict[str, dict[str, object]] = {}
   for name, bucket in per_skill.items():
@@ -241,6 +285,17 @@ def evaluate(
   return report
 
 
+def _condition_label(corruption: bool, train_config: bool, seed: int | None) -> str:
+  """Human-readable measurement condition, recorded with every report."""
+  if train_config:
+    base = "train-config (noise + pushes + resets)"
+  elif corruption:
+    base = "play-config + observation noise"
+  else:
+    base = "play-config (clean observations)"
+  return base if seed is None else f"{base}, seed={seed}"
+
+
 def _parse_pairs(spec: str, skills: list[str]) -> list[tuple[str, str]]:
   """Parse ``"jump>handstand,walk>handstand"`` into ordered pairs."""
   pairs: list[tuple[str, str]] = []
@@ -269,6 +324,9 @@ def transitions(
   measure_steps: int,
   device: str,
   pairs: list[tuple[str, str]] | None = None,
+  corruption: bool = False,
+  train_config: bool = False,
+  seed: int | None = None,
 ) -> dict[str, object]:
   """Script every ordered skill transition and score the destination skill.
 
@@ -278,18 +336,15 @@ def transitions(
   switches). Each pair is scored on the destination skill's own success metric
   measured over the last ``measure_steps`` steps.
   """
-  configure_torch_backends()
-  cfg = load_env_cfg(task_id, play=True)
-  cfg.scene.num_envs = num_envs
-  agent_cfg = load_rl_cfg(task_id)
-  env = ManagerBasedRlEnv(cfg=cfg, device=device)
-  wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-  runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
-  runner = runner_cls(wrapped, asdict(agent_cfg), device=device)
-  runner.load(
-    str(checkpoint), load_cfg={"actor": True}, strict=True, map_location=device
+  env, policy = build_policy_env(
+    task_id,
+    checkpoint,
+    num_envs=num_envs,
+    device=device,
+    corruption=corruption,
+    train_config=train_config,
+    seed=seed,
   )
-  policy = runner.get_inference_policy(device=device)
 
   term = env.command_manager.get_term("skill")
   assert isinstance(term, SkillCommandTerm), "transitions need the unified task"
@@ -339,6 +394,7 @@ def transitions(
     "task_id": task_id,
     "checkpoint": str(checkpoint),
     "num_envs": num_envs,
+    "condition": _condition_label(corruption, train_config, seed),
     "hold_steps": hold_steps,
     "settle_steps": settle_steps,
     "measure_steps": measure_steps,
@@ -392,6 +448,19 @@ def main() -> None:
     help="score every ordered skill transition instead of per-skill rollouts",
   )
   parser.add_argument(
+    "--corruption",
+    action="store_true",
+    help="play config with the actor's observation noise switched back on",
+  )
+  parser.add_argument(
+    "--train-config",
+    action="store_true",
+    help="use the training config: noise, interval pushes and episode resets",
+  )
+  parser.add_argument(
+    "--seed", type=int, default=None, help="pin the environment randomization"
+  )
+  parser.add_argument(
     "--pairs",
     default="",
     help="comma separated 'from>to' subset for --transitions, e.g. jump>handstand",
@@ -418,6 +487,9 @@ def main() -> None:
       num_envs=args.num_envs,
       steps=args.steps,
       device=args.device,
+      corruption=args.corruption,
+      train_config=args.train_config,
+      seed=args.seed,
     )
   print(json.dumps(report, indent=2, ensure_ascii=False))
 
