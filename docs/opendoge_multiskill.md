@@ -20,7 +20,25 @@
 | 行为克隆学生（训练产物） | `logs/skills_data/student_comboA.pt`（seed 0）|
 | 专家数据 | `logs/skills_data/{walk,getup,handstand,jump}.pt` |
 
-直接回放：`uv run baseline-play opendoge skills`。
+直接回放（Viser，含技能选择器）：
+
+```bash
+uv run baseline-play opendoge skills --num-envs 16
+```
+
+浏览器打开 `http://localhost:8080`。技能是在 reset 时按环境分配的，所以多开几个
+环境就能看到同一个网络里的四个技能并排跑。`Commands → skill (multi-skill)` 下有：
+
+- **Skill** 下拉框 + **Apply to selected env**：把当前选中环境的技能切过去，并
+  请求该环境 reset，使其从该技能自己的 reset 分布起步（走/倒立/跳跃为站姿，
+  起身为随机跌倒姿态）
+- **Apply to all envs**：同上，但作用于全部环境
+- **Release overrides**：取消选择，恢复按 `skill_weights` 随机采样
+- 选择是**粘性**的（`set_skill_override`），所以 viewer 自带的 Reset 按钮不会
+  把选择冲掉；`force_skill` 则是非粘性的，用于脚本化切换评估
+
+只在 viewer 里生效：`_skill_override` 默认全为 -1，训练路径完全不触碰它，
+因此采样分布不受影响。
 
 **交付的是行为克隆策略，不是 PPO 微调策略**——理由与完整对照见 §5.3。
 

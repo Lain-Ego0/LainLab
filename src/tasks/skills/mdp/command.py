@@ -18,7 +18,9 @@ environment's skill mid-episode for transition training.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch
 from mjlab.entity import Entity
@@ -26,6 +28,9 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.math import sample_uniform
+
+if TYPE_CHECKING:
+  import viser
 
 SKILL_NAMES = ("walk", "handstand", "getup", "jump")
 
@@ -86,6 +91,12 @@ class SkillCommandTerm(CommandTerm):
       raise ValueError("skill_weights must match skill_names in length")
     self._weights = torch.tensor(weights, dtype=torch.float32, device=self.device)
     self._weights = self._weights / self._weights.sum()
+    # Viewer-only per-environment skill override (-1 = none). Set from the Viser
+    # GUI so a demo can pick a skill and have it stick across resets; training
+    # never touches it, so the sampled distribution is unchanged.
+    self._skill_override = torch.full(
+      (self.num_envs,), -1, dtype=torch.long, device=self.device
+    )
 
   # -- public helpers -------------------------------------------------------
 
@@ -121,6 +132,77 @@ class SkillCommandTerm(CommandTerm):
     self.skill[ids] = self.skill_index(name)
     self._reset_skill_state(ids)
     self._refresh_commands(ids)
+
+  def set_skill_override(
+    self, name: str | None, env_ids: torch.Tensor | None = None
+  ) -> None:
+    """Pin ``env_ids`` (all by default) to ``name``; ``None`` releases them.
+
+    Unlike :meth:`force_skill`, an override survives environment resets, which is
+    what makes the viewer's Reset button usable after picking a skill.
+    """
+    ids = (
+      torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
+    )
+    if name is None:
+      self._skill_override[ids] = -1
+      return
+    self._skill_override[ids] = self.skill_index(name)
+    self.force_skill(name, ids)
+
+  def create_gui(
+    self,
+    name: str,
+    server: viser.ViserServer,
+    get_env_idx: Callable[[], int],
+    on_change: Callable[[], None] | None = None,
+    request_action: Callable[[str, object], None] | None = None,
+  ) -> None:
+    """Viser controls: pick the skill for one environment, or for all of them.
+
+    Applying a skill also requests a reset of those environments, so the chosen
+    skill starts from its own reset distribution (standing for walk/handstand/
+    jump, a random fall for get-up) instead of inheriting whatever pose the
+    previous skill left behind. Because the override is sticky, the viewer's own
+    Reset button keeps the selection.
+    """
+    from viser import Icon
+
+    def _apply(all_envs: bool) -> None:
+      ids = (
+        None
+        if all_envs
+        else torch.tensor([get_env_idx()], dtype=torch.long, device=self.device)
+      )
+      self.set_skill_override(str(dropdown.value), ids)
+      if request_action is not None:
+        request_action("CUSTOM", {"type": "gui_reset", "all_envs": all_envs})
+      if on_change is not None:
+        on_change()
+
+    with server.gui.add_folder(f"{name} (multi-skill)"):
+      dropdown = server.gui.add_dropdown(
+        "Skill",
+        options=list(self.cfg.skill_names),
+        initial_value=self.cfg.skill_names[0],
+      )
+      one_btn = server.gui.add_button("Apply to selected env")
+      all_btn = server.gui.add_button("Apply to all envs")
+      release_btn = server.gui.add_button("Release overrides", icon=Icon.SQUARE_X)
+
+      @one_btn.on_click
+      def _(_) -> None:
+        _apply(all_envs=False)
+
+      @all_btn.on_click
+      def _(_) -> None:
+        _apply(all_envs=True)
+
+      @release_btn.on_click
+      def _(_) -> None:
+        self.set_skill_override(None)
+        if on_change is not None:
+          on_change()
 
   def set_switch_prob(self, value: float) -> None:
     self.cfg.switch_prob = float(value)
@@ -173,7 +255,9 @@ class SkillCommandTerm(CommandTerm):
 
   def _assign_skills(self, env_ids: torch.Tensor) -> None:
     weights = self._weights.expand(len(env_ids), -1)
-    self.skill[env_ids] = torch.multinomial(weights, 1).squeeze(-1)
+    sampled = torch.multinomial(weights, 1).squeeze(-1)
+    override = self._skill_override[env_ids]
+    self.skill[env_ids] = torch.where(override >= 0, override, sampled)
 
   def _reset_skill_state(self, env_ids: torch.Tensor) -> None:
     self.phase[env_ids] = 0.0

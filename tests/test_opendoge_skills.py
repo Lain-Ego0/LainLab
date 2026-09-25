@@ -159,6 +159,59 @@ def test_command_block_is_skill_specific() -> None:
     env.close()
 
 
+def test_skill_override_survives_resets() -> None:
+  """The viewer's skill picker must stick across resets.
+
+  `force_skill` sets the current skill only; the reset event re-samples and would
+  undo it. `set_skill_override` is the sticky variant the Viser GUI uses, so the
+  viewer's Reset button can restart the chosen skill from its own reset
+  distribution rather than losing the selection.
+  """
+  env = _build(32)
+  try:
+    env.reset()
+    term = _skill_term(env)
+
+    # A plain force is undone by the next reset.
+    term.force_skill("jump")
+    assert bool(term.skill_is("jump").all())
+    env.reset()
+    assert not bool(term.skill_is("jump").all()), "force_skill unexpectedly sticky"
+
+    # An override is not.
+    term.set_skill_override("handstand")
+    assert bool(term.skill_is("handstand").all())
+    for _ in range(3):
+      env.reset()
+      assert bool(term.skill_is("handstand").all())
+
+    # A per-environment override pins only that environment, and leaves the rest
+    # sampling freely (so some of them will also draw get-up by chance -- the
+    # check is that they are free, not that they differ).
+    term.set_skill_override(None)
+    env.reset()
+    term.set_skill_override("getup", torch.tensor([0]))
+    for _ in range(3):
+      env.reset()
+      assert bool(term.skill_is("getup")[0])
+    other_counts: list[int] = []
+    for _ in range(4):
+      env.reset()
+      assert bool(term.skill_is("getup")[0])
+      other_counts.append(int(term.skill[1:].eq(term.skill_index("getup")).sum()))
+    assert len(set(other_counts)) > 1, f"other environments look pinned: {other_counts}"
+
+    # Releasing restores ordinary sampling.
+    term.set_skill_override(None)
+    seen: set[int] = set()
+    for _ in range(4):
+      env.reset()
+      seen |= set(term.skill.tolist())
+    assert len(seen) >= 2, seen
+  finally:
+    env.close()
+
+
 def test_contact_termination_is_disabled_only_for_getup() -> None:
   cfg = load_env_cfg(TASK_ID)
   assert list(cfg.terminations) == ["contact", "time_out"]
