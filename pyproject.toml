@@ -29,6 +29,12 @@ gmr-to-npz = "src.cli:gmr_to_npz"
 webui = "src.webui:main"
 src-webui = "src.webui:main"
 src-workbench = "src.workbench.server:main"
+opendoge-calibrate = "src.skills.calibrate:main"
+opendoge-eval = "src.skills.evaluate:main"
+opendoge-collect = "src.skills.collect:main"
+opendoge-bc = "src.skills.bc:main"
+opendoge-dagger = "src.skills.dagger:main"
+opendoge-export = "src.skills.export:main"
 
 [dependency-groups]
 dev = [
