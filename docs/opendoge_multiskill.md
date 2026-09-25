@@ -17,7 +17,7 @@
 | 单策略（入库） | `baseline/opendoge/skills/model.pt` |
 | 单策略 ONNX | `baseline/opendoge/skills/policy.onnx`（777 KB） |
 | 清单 | `baseline/opendoge/skills/baseline.json` |
-| 行为克隆学生（训练产物） | `logs/skills_data/student4.pt` |
+| 行为克隆学生（训练产物） | `logs/skills_data/student_comboA.pt`（seed 0）|
 | 专家数据 | `logs/skills_data/{walk,getup,handstand,jump}.pt` |
 
 直接回放：`uv run baseline-play opendoge skills`。
@@ -205,6 +205,9 @@ uv run opendoge-collect --skill walk                     # 同理 getup/handstan
 uv run opendoge-bc --data logs/skills_data/*.pt --output logs/skills_data/student4.pt
 ```
 
+> 本节用的是**早期专家**（倒立 1222 / 跳跃 1977 迭代），得到 `student4`；
+> 交付版本在此之上做了专家重选，见 §5.3。
+
 | 技能 | 验证集 RMSE（弧度） |
 |---|---|
 | walk | 0.0131 |
@@ -215,7 +218,8 @@ uv run opendoge-bc --data logs/skills_data/*.pt --output logs/skills_data/studen
 验证集误差按技能分别统计——共享主干可能为了一个技能牺牲另一个，聚合数字会掩盖
 被牺牲的那个。
 
-**行为克隆本身的物理验收**（`opendoge-eval ... --checkpoint logs/skills_data/student4.pt`）：
+**行为克隆本身的物理验收**（`opendoge-eval ... --checkpoint logs/skills_data/student4.pt`，
+早期专家组合）：
 
 | 技能 | 指标 | 学生 |
 |---|---|---|
@@ -249,32 +253,48 @@ uv run opendoge-eval LainLab-OpenDoge-Skills-Flat \
 | **jump** | 0.809 | 0.969 | 1.000 | 1.000 |
 
 非对角平均 **0.929**。最弱的是 `handstand → walk`（0.634）：从倒立直接落回步态
-是最难的一条链路，也正是 PPO 切换课程要改进的目标。
+是最难的一条链路，也正是 PPO 切换课程和专家重选（§5.3）共同针对的目标。交付
+版本的对应矩阵见 §5.3，非对角平均 0.943。
 
-### 5.3 用满预算专家重跑克隆：更好，但要挑对指标
+### 5.3 专家重选：按**切换分数**挑，而不是按单技能分数挑
 
-把 §3 的满预算专家（倒立 5000 迭代、跳跃 4000 迭代）重新采集数据、重新克隆一次：
+同一次克隆的质量不只取决于专家各自跑得多好，还取决于它们行为之间的衔接。
+walk/getup 固定用入库 baseline，倒立与跳跃各有两个候选，实测三种组合：
 
-| 指标 | student4（早期专家） | student_full（满预算专家） |
-|---|---|---|
-| walk 站立且迈步 / 速度误差 | 1.000 / 0.054 | 1.000 / 0.053 |
-| handstand 维持 | **0.970** | 0.969 |
-| getup 起身站立 | 0.952 | **0.971** |
-| jump 峰值抬升 / 恢复站立 | **0.081 m** / 0.931 | 0.073 m / **0.972** |
-| **切换非对角平均** | **0.929** | 0.873 |
+| 专家组合 | 切换非对角平均 | `→handstand` 最差格 | jump 恢复 |
+|---|---|---|---|
+| 早期倒立(1222) + 早期跳跃(1977) → `student4` | 0.929 | 0.938 | 0.931 |
+| 满预算倒立(4999) + 满预算跳跃(3999) → `student_full` | 0.873 | **0.359** | 0.972 |
+| **早期倒立(1222) + 满预算跳跃(3999) → 交付版** | **0.943** | **0.953** | **0.969** |
 
-**单技能更强的专家没有换来更强的单策略。** 满预算版本在起身、跳跃恢复上更好，
-但切换平均掉了 5.6 个点，其中 `jump → handstand` 从 1.000 掉到 0.422（这是
-64 个环境的比例，接近 1.0 的方差极小，所以是真实差异而非噪声）。
+关键观察：**满预算倒立专家与早期倒立专家的单技能指标完全相同**（维持
+0.962/0.963、基座 0.218/0.218、对齐 0.973/0.975），但它们的克隆在
+`jump → handstand` 上是 **0.359 vs 0.953**——远超噪声的差异（64 环境下接近
+0 或 1 的比例方差很小）。而满预算跳跃专家确实更好（恢复 0.932 → 0.970），
+所以留下它。交付组合因此取"早期倒立 + 满预算跳跃"，把两边的好处都拿到。
 
-原因是克隆质量取决于专家行为之间的**相互衔接**，而不只是各自单独跑得多好：
-跳跃专家换成相位时机更"紧"的版本后，切到倒立时机器人常处在跳跃中途，起立更难。
+两个 BC 种子复核：切换非对角平均 **0.943 / 0.935**（都 ≥ 0.93），
+`→handstand` 每一格落在 0.891–1.000。单格差异小于约 0.1 不宜过度解读，
+但 `→handstand` 从 0.359 回到 0.95 以上是明确的。
 
-因此：
-- **入库的 baseline 仍是 `student4`**（切换 0.929 是单策略最核心的能力）；
-- 满预算专家保留为单任务产物的更好版本；
-- 选专家检查点时应该用**切换分数**而不是单任务分数——这是一个具体的、
-  可执行的流程改进：采集候选专家的数据各克隆一次，按切换矩阵挑。
+流程结论：**专家选型标准应该是切换矩阵，而不是单任务分数**——两者并不一致，
+而单策略比"四个策略 + 状态机"多出来的唯一能力就是切换。
+
+#### 5.3.1 尝试并放弃：跨技能 DAgger
+
+思路是让学生 rollout 覆盖"从技能 A 切到技能 B"的中间状态，用 B 的专家标注
+（`opendoge-dagger --include-transitions`，12 个有序对全覆盖）。
+
+结果**破坏性失败**：倒立验证误差从 0.0088 涨到 **2.72 弧度**、倒立维持率掉到 0。
+原因诊断清楚——单技能专家只在**自己任务的流形**上有效，离线流形上的标签没有
+意义：统计采集到的倒立目标样本，**98%（59969/61440）是腾空状态**，在跳跃中途
+问倒立专家"该怎么做"，答案自然不能用来监督。
+
+这不是调参能解决的。`jump → handstand` 真正缺的是"停住跳动 → 落到站姿 → 再
+起立"这个**复合**行为，而没有任何单个专家负责它。要做对，需要要么给这个复合
+行为单独训一个专家，要么改用能覆盖转移的 RL 目标（per-skill 价值头 + 切换课程），
+而不是继续在单技能专家上做监督标注。工具与负结果都保留在
+`src/skills/dagger.py` 里以便复核。
 
 ### 5.4 PPO 微调：结论是**不采用**
 行为克隆产物只有 actor（critic 重拟合很便宜、优化器状态跨克隆无意义），而框架
@@ -296,7 +316,7 @@ uv run train LainLab-OpenDoge-Skills-Flat --env.scene.num-envs 4096 \
 从行为克隆策略继续 PPO，用切换课程（迭代 800 起 0.0005、1800 起 0.0015）做了
 两组对照。两组都**没有**超过行为克隆，而是在技能之间互相交换：
 
-| 指标 | BC 学生 | PPO 3e-4，1900 迭代 | PPO 5e-5，900 迭代 |
+| 指标 | BC `student4` | PPO 3e-4，1900 迭代 | PPO 5e-5，900 迭代 |
 |---|---|---|---|
 | walk 站立且迈步 | **1.000** | 0.931 | **1.000** |
 | walk 速度跟踪误差（越低越好） | **0.054** | 0.098 | 0.296 |
@@ -318,9 +338,10 @@ walk 的稳定性下降、切换变差。
 2. 行为克隆策略处在一个很窄的吸引域里，随机 PPO 更新任何学习率都会把它推出去
    一部分。
 
-因此**交付物是行为克隆策略**（`logs/skills_data/student4.pt`，已导出为
+因此**交付物是行为克隆策略**（`logs/skills_data/student_comboA.pt`，已导出为
 `baseline/opendoge/skills/policy.onnx`）。这不是"没做完"——行为克隆已经达到并
-超过每个单技能专家的水平（倒立 0.970 vs 专家 0.963，起身 0.952 vs 0.912）。
+超过每个单技能专家的水平（倒立 0.971 vs 专家 0.963，起身 0.961 vs 0.912，
+跳跃恢复 0.969 vs 0.970）。
 
 下一步若要真正用 PPO 提升，应该先做架构隔离而不是调学习率：
 
@@ -372,6 +393,8 @@ actor。其余路径仍是框架标准训练流程。
 | 跳跃 v2（加相位窗口，§3.2 验收值来源） | 4096 | 1977 | 16 分 50 秒 | 4000 | 49% |
 | 跳跃（满预算） | 4096 | **3999** | 约 65 分 | 4000 | **100%** |
 | 行为克隆 | — | 30 epoch | 约 7 分 | 30 epoch | **100%**（未触发早停） |
+| 跨技能 DAgger（失败，未采用） | — | 12 对 × 150 步 | 约 3 分 | — | 倒立目标样本 98% 为腾空 |
+| 行为克隆 combo A（交付，seed 0 / seed 1） | — | 30 epoch ×2 | 约 14 分 | 30 | **100%** |
 | PPO 微调 3e-4（未采用） | 4096 | 1900 | 约 40 分 | 3000 | 63%（中途放弃） |
 | PPO 微调 5e-5（未采用） | 4096 | 899 | 约 8 分 | 900 | 100% |
 
@@ -409,8 +432,8 @@ uv run train LainLab-OpenDoge-Jump      --env.scene.num-envs 4096
 uv run opendoge-eval LainLab-OpenDoge-Handstand --checkpoint <ckpt>
 uv run opendoge-eval LainLab-OpenDoge-Jump      --checkpoint <ckpt>
 uv run opendoge-collect --skill {walk,getup,handstand,jump} [--checkpoint <ckpt>]
-uv run opendoge-bc --data logs/skills_data/*.pt --output logs/skills_data/student4.pt
-uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint logs/skills_data/student4.pt
+uv run opendoge-bc --data logs/skills_data/*.pt --output logs/skills_data/student_comboA.pt
+uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint logs/skills_data/student_comboA.pt
 uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --transitions
 uv run opendoge-export LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --output <onnx>
 ```

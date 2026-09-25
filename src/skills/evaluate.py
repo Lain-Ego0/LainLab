@@ -241,6 +241,24 @@ def evaluate(
   return report
 
 
+def _parse_pairs(spec: str, skills: list[str]) -> list[tuple[str, str]]:
+  """Parse ``"jump>handstand,walk>handstand"`` into ordered pairs."""
+  pairs: list[tuple[str, str]] = []
+  for chunk in spec.split(","):
+    chunk = chunk.strip()
+    if not chunk:
+      continue
+    parts = chunk.replace("->", ">").split(">")
+    if len(parts) != 2:
+      raise SystemExit(f"--pairs expects 'from>to', got {chunk!r}")
+    source, target = (part.strip() for part in parts)
+    for name in (source, target):
+      if name not in skills:
+        raise SystemExit(f"unknown skill {name!r}; have {skills}")
+    pairs.append((source, target))
+  return pairs
+
+
 def transitions(
   task_id: str,
   checkpoint: Path,
@@ -250,6 +268,7 @@ def transitions(
   settle_steps: int,
   measure_steps: int,
   device: str,
+  pairs: list[tuple[str, str]] | None = None,
 ) -> dict[str, object]:
   """Script every ordered skill transition and score the destination skill.
 
@@ -276,11 +295,15 @@ def transitions(
   assert isinstance(term, SkillCommandTerm), "transitions need the unified task"
   skills = list(SKILL_NAMES)
   ids = torch.arange(num_envs, device=device)
-  matrix: dict[str, dict[str, float]] = {}
+  selected = pairs or [(a, b) for a in skills for b in skills]
+  # Only reset subsets of the batch when a filtered pair list is used, so a
+  # targeted check costs a fraction of the full matrix.
+  sources = sorted({source for source, _ in selected})
+  matrix: dict[str, dict[str, float]] = {source: {} for source in sources}
 
-  for source in skills:
-    matrix[source] = {}
-    for target in skills:
+  for source in sources:
+    targets = [target for a, target in selected if a == source]
+    for target in targets:
       observation, _ = env.reset()
       term.force_skill(source, ids)
       for _ in range(hold_steps):
@@ -368,6 +391,11 @@ def main() -> None:
     action="store_true",
     help="score every ordered skill transition instead of per-skill rollouts",
   )
+  parser.add_argument(
+    "--pairs",
+    default="",
+    help="comma separated 'from>to' subset for --transitions, e.g. jump>handstand",
+  )
   parser.add_argument("--hold-steps", type=int, default=250)
   parser.add_argument("--settle-steps", type=int, default=250)
   parser.add_argument("--measure-steps", type=int, default=200)
@@ -381,6 +409,7 @@ def main() -> None:
       settle_steps=args.settle_steps,
       measure_steps=args.measure_steps,
       device=args.device,
+      pairs=(_parse_pairs(args.pairs, list(SKILL_NAMES)) if args.pairs else None),
     )
   else:
     report = evaluate(

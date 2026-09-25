@@ -118,6 +118,81 @@ def collect_round(
   )
 
 
+def collect_transitions(
+  experts: dict[str, object],
+  student,
+  *,
+  skills: list[str],
+  num_envs: int,
+  hold_steps: int,
+  collect_steps: int,
+  device: str,
+) -> dict[str, SkillDataset]:
+  """Collect *approach* states for every ordered skill pair.
+
+  Cloning only ever sees each expert on its own reset distribution, so nothing
+  in the data covers "arriving at this skill from another one" -- which is
+  exactly where the first single-policy attempt was weak (jump -> handstand
+  scored 0.36 while every skill scored > 0.95 on its own). This walks every
+  ordered pair: hold the source skill long enough to establish it, switch to the
+  target, and record the target expert's action on the states the student
+  actually visits during that approach.
+
+  Acting with the student (rather than the expert) is deliberate, and is the
+  difference between this and simply recording more expert rollouts.
+  """
+  cfg = load_env_cfg(SKILLS_TASK_ID)
+  cfg.scene.num_envs = num_envs
+  env = ManagerBasedRlEnv(cfg, device=device)
+  term = env.command_manager.get_term("skill")
+  assert isinstance(term, SkillCommandTerm)
+  ids = torch.arange(num_envs, device=device)
+
+  collected: dict[str, list[SkillDataset]] = {skill: [] for skill in skills}
+  pairs = [(a, b) for a in skills for b in skills if a != b]
+  for source, target in pairs:
+    observation, _ = env.reset()
+    term.force_skill(source, ids)
+    for _ in range(hold_steps):
+      hold_obs = observation["actor"]
+      assert isinstance(hold_obs, torch.Tensor)
+      with torch.no_grad():
+        observation, _, _, _, _ = env.step(_student_action(student, hold_obs, device))
+    term.force_skill(target, ids)
+    obs_chunks: list[torch.Tensor] = []
+    label_chunks: list[torch.Tensor] = []
+    for _ in range(collect_steps):
+      actor_obs = observation["actor"]
+      assert isinstance(actor_obs, torch.Tensor)
+      label = _expert_action(experts[target], actor_obs, device)
+      obs_chunks.append(actor_obs.detach().to("cpu", torch.float16))
+      label_chunks.append(label.detach().to("cpu", torch.float16))
+      with torch.no_grad():
+        observation, _, _, _, _ = env.step(_student_action(student, actor_obs, device))
+    collected[target].append(
+      SkillDataset(
+        skill=target,
+        task_id=SKILL_SOURCES[target].task_id,
+        expert_checkpoint=f"transition:{source}->{target}",
+        obs=torch.cat(obs_chunks).reshape(-1, OBS_DIM),
+        action=torch.cat(label_chunks).reshape(-1, ACTION_DIM),
+      )
+    )
+  env.close()
+  merged: dict[str, SkillDataset] = {}
+  for skill, datasets in collected.items():
+    if not datasets:
+      continue
+    merged[skill] = SkillDataset(
+      skill=skill,
+      task_id=SKILL_SOURCES[skill].task_id,
+      expert_checkpoint="transition-aggregate",
+      obs=torch.cat([d.obs for d in datasets]),
+      action=torch.cat([d.action for d in datasets]),
+    )
+  return merged
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--student", type=Path, required=True)
@@ -139,6 +214,13 @@ def main() -> None:
     help="override the expert checkpoint for one skill (repeatable)",
   )
   parser.add_argument("--rounds", type=int, default=2)
+  parser.add_argument(
+    "--include-transitions",
+    action="store_true",
+    help="also collect every ordered skill-pair approach state (transition DAgger)",
+  )
+  parser.add_argument("--hold-steps", type=int, default=200)
+  parser.add_argument("--collect-steps", type=int, default=150)
   parser.add_argument("--steps-per-env", type=int, default=200)
   parser.add_argument("--num-envs", type=int, default=2048)
   parser.add_argument("--expert-prob", type=float, default=0.5)
@@ -215,6 +297,29 @@ def main() -> None:
         )
       aggregated[skill] = fresh
       round_summary[f"{skill}_samples"] = fresh.samples
+
+    if args.include_transitions:
+      fresh_transitions = collect_transitions(
+        experts,
+        student,
+        skills=args.skill,
+        num_envs=args.num_envs,
+        hold_steps=args.hold_steps,
+        collect_steps=args.collect_steps,
+        device=args.device,
+      )
+      for skill, extra in fresh_transitions.items():
+        existing = aggregated[skill]
+        aggregated[skill] = SkillDataset(
+          skill=skill,
+          task_id=existing.task_id,
+          expert_checkpoint=existing.expert_checkpoint,
+          obs=torch.cat((existing.obs, extra.obs)),
+          action=torch.cat((existing.action, extra.action)),
+        )
+      round_summary["transition_samples"] = {
+        skill: int(extra.samples) for skill, extra in fresh_transitions.items()
+      }
 
     datasets = [aggregated[skill] for skill in args.skill]
     training = train(
