@@ -5,7 +5,14 @@ from src.baselines import resolve_baseline
 
 
 def test_opendoge_baselines_resolve() -> None:
-  for terrain, suffix in (("flat", "Flat"), ("rough", "Rough"), ("getup", "Getup")):
+  cases = (
+    ("flat", "Flat"),
+    ("rough", "Rough"),
+    ("getup", "Getup"),
+    # The single-policy multi-skill baseline: one network, four skills.
+    ("skills", "Skills-Flat"),
+  )
+  for terrain, suffix in cases:
     baseline = resolve_baseline("opendoge", terrain)
     assert baseline.robot == "opendoge"
     assert baseline.terrain == terrain

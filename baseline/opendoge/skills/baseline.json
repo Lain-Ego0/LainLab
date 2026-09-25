@@ -1,0 +1,11 @@
+{
+  "robot": "opendoge",
+  "terrain": "skills",
+  "task_id": "LainLab-OpenDoge-Skills-Flat",
+  "method": "Behaviour cloning from four single-skill experts",
+  "iterations": null,
+  "checkpoint": "model.pt",
+  "onnx": "policy.onnx",
+  "source_checkpoint": "logs/skills_data/student4.pt",
+  "selection": "Single policy covering walk / handstand / getup / jump with a 54-field observation (48 shared proprioceptive fields + one-hot skill + phase). Chosen over the PPO fine-tunes: behaviour cloning scores walk 1.000 standing and 0.054 m/s tracking error, handstand 0.970, getup 0.952, jump 0.081 m peak rise, and 0.929 mean off-diagonal transition success. Both PPO fine-tunes (LR 3e-4 for 1900 iterations and LR 5e-5 for 900 iterations) traded skills against each other and scored 0.916 and 0.865 on transitions. See docs/opendoge_multiskill.md."
+}

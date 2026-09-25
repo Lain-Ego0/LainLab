@@ -77,6 +77,14 @@ uv run baseline-play opendoge getup --device cuda:0 --num-envs 1
 # 用随机动作做配置冒烟测试
 uv run play LainLab-OpenDoge-Flat --agent random --num-envs 1
 
+# 单策略多技能：walk / handstand / getup / jump
+uv run train LainLab-OpenDoge-Handstand --env.scene.num-envs 4096
+uv run train LainLab-OpenDoge-Jump --env.scene.num-envs 4096
+uv run train LainLab-OpenDoge-Skills-Flat --env.scene.num-envs 4096
+uv run opendoge-calibrate --write          # 倒立/跳跃目标标定
+uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt>
+uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --transitions
+
 # 回放本地策略
 uv run play LainLab-OpenDoge-Flat --checkpoint-file logs/.../model_1000.pt
 
@@ -122,7 +130,7 @@ npm run dev
 
 `csv-to-npz` 直接在本地生成 NPZ，不需要 Weights & Biases。`--output-name` 只传文件名时，输出会保存到输入 CSV 的同一目录；也可传入完整路径。G1-23DoF 动作使用 `--robot g1_23dof`。
 
-任务命名统一使用分类前缀，例如 `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` 和 `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`。OpenDoge 属于自研机器人，归入 `LainLab` 分类，提供 Flat、Rough 和 Getup 版本。速度任务支持 A2、As2、Go2、OpenDoge、G1、G1-23Dof、H1_2、H2 和 R1；动作跟踪任务支持 G1 与 G1-23Dof；当前平地倒地自恢复任务为 `LainLab-OpenDoge-Getup`。
+任务命名统一使用分类前缀，例如 `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` 和 `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`。OpenDoge 属于自研机器人，归入 `LainLab` 分类，提供 Flat、Rough、Getup、Handstand、Jump 版本，以及把前四类技能合成单策略的 `LainLab-OpenDoge-Skills-Flat`。速度任务支持 A2、As2、Go2、OpenDoge、G1、G1-23Dof、H1_2、H2 和 R1；动作跟踪任务支持 G1 与 G1-23Dof；当前平地倒地自恢复任务为 `LainLab-OpenDoge-Getup`。单策略多技能的完整设计与验收见 [docs/opendoge_multiskill.md](docs/opendoge_multiskill.md)。
 
 ## 运行验证与已知限制
 
@@ -230,6 +238,14 @@ uv run baseline-play opendoge getup --device cuda:0 --num-envs 1
 # Run a random-action configuration smoke test
 uv run play LainLab-OpenDoge-Flat --agent random --num-envs 1
 
+# Single-policy multi-skill: walk / handstand / getup / jump
+uv run train LainLab-OpenDoge-Handstand --env.scene.num-envs 4096
+uv run train LainLab-OpenDoge-Jump --env.scene.num-envs 4096
+uv run train LainLab-OpenDoge-Skills-Flat --env.scene.num-envs 4096
+uv run opendoge-calibrate --write          # handstand / jump target calibration
+uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt>
+uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --transitions
+
 # Replay a local policy
 uv run play LainLab-OpenDoge-Flat --checkpoint-file logs/.../model_1000.pt
 
@@ -240,7 +256,7 @@ uv run csv-to-npz --input-file src/assets/motions/g1/dance1_subject2.csv \
 
 `csv-to-npz` creates an NPZ locally and does not require Weights & Biases. If `--output-name` is only a filename, the output is written next to the input CSV; an absolute or relative output path may also be used. Use `--robot g1_23dof` for G1-23DoF motions.
 
-Tasks use a category prefix, for example `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` and `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`. OpenDoge is an in-house robot and belongs to `LainLab`; Flat, Rough, and Getup variants are registered. Velocity tasks support A2, As2, Go2, OpenDoge, G1, G1-23Dof, H1_2, H2, and R1. Motion tracking tasks support G1 and G1-23Dof. The current flat-ground fall-recovery task is `LainLab-OpenDoge-Getup`.
+Tasks use a category prefix, for example `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` and `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`. OpenDoge is an in-house robot and belongs to `LainLab`; Flat, Rough, Getup, Handstand, and Jump variants are registered, plus `LainLab-OpenDoge-Skills-Flat`, which folds the first four skills into a single policy. Velocity tasks support A2, As2, Go2, OpenDoge, G1, G1-23Dof, H1_2, H2, and R1. Motion tracking tasks support G1 and G1-23Dof. The current flat-ground fall-recovery task is `LainLab-OpenDoge-Getup`. The full single-policy multi-skill design and acceptance record is in [docs/opendoge_multiskill.md](docs/opendoge_multiskill.md).
 
 ## Validation status and known limitations
 
