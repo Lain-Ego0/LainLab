@@ -6,6 +6,7 @@ lives under ``tasks.robots``.
 """
 
 from . import amp as amp
+from . import handstand as handstand
 from . import tracking as tracking
 from . import velocity as velocity
 from .robots import g1 as g1
@@ -17,4 +18,5 @@ unitree.register_velocity_tasks()
 go2.register_tasks()
 opendoge.register_velocity_tasks()
 opendoge.register_getup_tasks()
+opendoge.register_handstand_tasks()
 g1.register_tracking_tasks()
