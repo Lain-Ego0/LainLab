@@ -25,20 +25,25 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from rsl_rl.models.mlp_model import MLPModel
 from tensordict import TensorDict
 
-from src.skills.collect import STUDENT_OBS_DIM, SkillDataset
+from src.skills.collect import SkillDataset
+from src.tasks.skills.layout import STUDENT_OBS_DIM
+from src.tasks.skills.rl import SkillHeadedActor
 
 OBS_DIM = STUDENT_OBS_DIM
 ACTION_DIM = 12
 HIDDEN_DIMS = (512, 256, 128)
 
 
-def build_student(device: str) -> MLPModel:
-  """Construct the student with the same architecture and keys as PPO's actor."""
+def build_student(device: str) -> SkillHeadedActor:
+  """Construct the student with the same architecture and keys as PPO's actor.
+
+  It must be the class the task registers (`SkillHeadedActor`), otherwise the
+  cloned weights would not load into the policy the evaluator builds.
+  """
   dummy = TensorDict({"actor": torch.zeros(1, OBS_DIM)}, batch_size=[1])
-  model = MLPModel(
+  model = SkillHeadedActor(
     obs=dummy,
     obs_groups={"actor": ["actor"]},
     obs_set="actor",

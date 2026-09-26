@@ -28,24 +28,10 @@ from mjlab.utils.torch import configure_torch_backends
 from tensordict import TensorDict
 
 import src.tasks  # noqa: F401
-from src.tasks.skills.mdp.command import SKILL_NAMES, SkillCommandTerm
+from src.tasks.skills.layout import EXPERT_OBS_DIM, STUDENT_OBS_DIM
+from src.tasks.skills.mdp.command import SkillCommandTerm
 
 SKILLS_TASK_ID = "LainLab-OpenDoge-Skills-Flat"
-# Unified actor layout: [shared proprio + command 48][jump twist 3][skill 6].
-# The skill block is `one_hot(skill)` plus `(phase_sin, phase_cos)`.
-SHARED_OBS_DIM = 48
-JUMP_TWIST_DIM = 3
-SKILL_OBS_DIM = len(SKILL_NAMES) + 2
-STUDENT_OBS_DIM = SHARED_OBS_DIM + JUMP_TWIST_DIM + SKILL_OBS_DIM
-# Native actor-observation width of each expert. Walk, get-up and handstand read
-# the shared 48 fields; the jump expert additionally consumes the twist block,
-# which sits immediately after them, so it reads the first 51.
-EXPERT_OBS_DIM: dict[str, int] = {
-  "walk": SHARED_OBS_DIM,
-  "getup": SHARED_OBS_DIM,
-  "handstand": SHARED_OBS_DIM,
-  "jump": SHARED_OBS_DIM + JUMP_TWIST_DIM,
-}
 DATA_ROOT = Path("logs/skills_data")
 
 

@@ -12,9 +12,10 @@ import src.tasks  # noqa: F401
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
-from src.skills.collect import (
+from src.tasks.skills.layout import (
   EXPERT_OBS_DIM,
   SHARED_OBS_DIM,
+  SKILL_ONE_HOT_SLICE,
   STUDENT_OBS_DIM,
 )
 from src.tasks.skills.mdp.command import (
@@ -300,3 +301,91 @@ def test_jump_command_block_reports_takeoff() -> None:
     assert torch.all(term.command[:, 2] == 1.0)
   finally:
     env.close()
+
+
+def test_bc_artifact_loads_into_the_policy_the_evaluator_builds() -> None:
+  """The clone and the evaluator must build the *same* network.
+
+  `opendoge-bc` constructs the student itself, while `opendoge-eval` gets it from
+  the runner, which resolves `RslRlModelCfg.class_name`. If those two disagree --
+  a per-skill head added on one side only, a renamed module -- the checkpoint
+  either fails to load or, worse, loads with a silently different architecture.
+  This pins the contract the whole delivery rests on.
+  """
+  import tempfile
+  from dataclasses import asdict
+  from pathlib import Path
+
+  from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+  from mjlab.tasks.registry import load_rl_cfg, load_runner_cls
+  from src.skills.bc import build_student
+
+  env = _build(2)
+  try:
+    agent_cfg = load_rl_cfg(TASK_ID)
+    assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
+    assert agent_cfg.actor.class_name.endswith("SkillHeadedActor")
+    wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    runner_cls = load_runner_cls(TASK_ID)
+    assert runner_cls is not None
+    runner = runner_cls(wrapped, asdict(agent_cfg), device="cpu")
+    actor = runner.alg.actor
+
+    student = build_student("cpu")
+    student_keys = set(student.state_dict())
+    actor_keys = set(actor.state_dict())
+    assert student_keys == actor_keys, student_keys ^ actor_keys
+
+    # End to end: the artifact a clone produces loads into that policy.
+    with tempfile.TemporaryDirectory() as tmp:
+      path = Path(tmp) / "student.pt"
+      # Exactly the artifact `opendoge-bc` writes (actor only, no critic).
+      torch.save(
+        {"actor_state_dict": student.state_dict(), "infos": {}, "iter": 0},
+        path,
+      )
+      loaded = runner.load(
+        str(path), load_cfg={"actor": True}, strict=True, map_location="cpu"
+      )
+      assert loaded is not None
+  finally:
+    env.close()
+
+
+def test_each_skill_has_its_own_head_on_a_shared_trunk() -> None:
+  """One output head per skill; the trunk is genuinely shared."""
+  from src.skills.bc import build_student
+
+  student = build_student("cpu")
+  assert student.num_skills == len(SKILL_NAMES)
+  state = student.state_dict()
+  head_keys = [key for key in state if key.startswith("heads.")]
+  assert len(head_keys) == 2 * len(SKILL_NAMES), head_keys
+  trunk_keys = [key for key in state if key.startswith("mlp.")]
+  assert trunk_keys, "the shared trunk disappeared"
+
+  # Identical observations, different skill token -> different actions. This is
+  # the property a single shared output layer cannot have.
+  obs = torch.zeros(len(SKILL_NAMES), STUDENT_OBS_DIM)
+  obs[:, 0] = 0.3  # a joint position, so the trunk output is non-trivial
+  for index in range(len(SKILL_NAMES)):
+    obs[index, SKILL_ONE_HOT_SLICE.start + index] = 1.0
+  with torch.no_grad():
+    actions = (
+      student({"actor": obs})
+      if isinstance(student, dict)
+      else student.__call__(_tensor_dict(obs))
+    )
+  actions = _tensor(actions)
+  assert actions.shape == (len(SKILL_NAMES), 12)
+  # Every pair of rows differs (the heads are independent), and the point of the
+  # change: the one-hot actually selects.
+  first = actions[0]
+  assert not torch.allclose(first, actions[1])
+  assert student.skill_index(obs).tolist() == list(range(len(SKILL_NAMES)))
+
+
+def _tensor_dict(obs: torch.Tensor):
+  from tensordict import TensorDict
+
+  return TensorDict({"actor": obs}, batch_size=[obs.shape[0]])
