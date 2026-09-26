@@ -10,6 +10,7 @@ import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
 from src.tasks.jump.mdp.command import JumpCommand
+from src.tasks.jump.mdp.state import JumpState, JumpStateCfg
 
 TASK_ID = "LainLab-OpenDoge-Jump"
 # 48 shared proprioceptive fields plus the jump's own twist command.
@@ -95,3 +96,40 @@ def test_standing_still_earns_no_jump_reward() -> None:
     assert values["upright"] > 0.9
   finally:
     env.close()
+
+
+def test_takeoff_survives_a_foot_landing_while_others_are_airborne() -> None:
+  """A staggered takeoff must still be timed, and timed honestly.
+
+  Clearing every foot's liftoff record whenever *any* foot lands deletes the
+  record of feet that are still in the air. A takeoff is then only registered
+  when all four lift together from a grounded stance, which reported a spread of
+  exactly 0 in every case (`_update_takeoff` docstring has the measurements).
+  """
+  state = JumpState(1, "cpu", JumpStateCfg(period_s=1000.0, standing_height=0.151))
+  true, false = True, False
+
+  def step(contacts: tuple[bool, bool, bool, bool], index: int) -> None:
+    contact = torch.tensor([contacts])
+    state.update(
+      None,
+      dt=0.01,
+      base_height=torch.tensor([0.151]),
+      airborne=~contact.any(dim=-1),
+      feet_contact=contact,
+      step_index=torch.tensor([index]),
+    )
+
+  step((true, true, true, true), 0)  # grounded, records nothing
+  step((false, true, true, true), 1)  # FR up
+  step((false, false, true, true), 2)  # FL up
+  step((false, false, false, false), 3)  # RR+RL up: takeoff complete
+  assert bool(state.takeoff_complete[0])
+  assert bool(state.takeoff_edge[0])
+  assert float(state.takeoff_spread[0]) == 3.0 - 1.0
+
+  step((true, false, false, false), 4)  # FR lands, the other three stay up
+  # Second takeoff: FR pushes off again while the others are still airborne.
+  step((false, false, false, false), 5)
+  assert bool(state.takeoff_complete[0]), "staggered takeoff was not registered"
+  assert float(state.takeoff_spread[0]) == 5.0 - 2.0

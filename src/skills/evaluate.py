@@ -223,8 +223,13 @@ def evaluate(
     takeoff_pending = torch.where(
       landed_now, torch.zeros_like(takeoff_pending), takeoff_pending
     )
+    # Per-foot clearing, matching `JumpState._update_takeoff`. Clearing all four
+    # whenever any foot lands throws away the liftoff record of feet that are
+    # still in the air, so only a full four-foot push-off from a grounded stance
+    # registers -- which makes the recorded spread identically zero and hides
+    # exactly the staggered takeoffs the metric exists to catch.
     foot_liftoff = torch.where(
-      landed_now[:, None], torch.full_like(foot_liftoff, -1), foot_liftoff
+      foot_contact, torch.full_like(foot_liftoff, -1), foot_liftoff
     )
     robot = env.scene["robot"]
     if start_xy is None:

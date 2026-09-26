@@ -141,18 +141,20 @@ class JumpState:
     self.takeoff_complete[ids] |= fresh
     self._takeoff_edge[ids] = fresh
 
-    # Any landing clears the per-foot record, so the next takeoff is timed on its
-    # own. Clearing only on a *completed* takeoff (the earlier behaviour) left
-    # stale liftoff steps from the previous cycle in the record whenever the
-    # robot took off again before all four had landed, which inflated the
-    # measured spread from a true 0 steps to ~0.9.
+    # Clear each foot's record on *its own* landing. Clearing all four whenever
+    # any foot lands (the previous behaviour) deletes the liftoff record of feet
+    # that are still in the air, so a takeoff could only be registered when all
+    # four lifted together from a fully grounded stance. Measured consequence:
+    # 144 of 521 airborne runs registered, and the recorded spread was 0 in
+    # *every* case -- a selection effect that made the simultaneity metric look
+    # perfect and kept the simultaneity reward almost entirely silent.
     landed = contact.any(dim=-1)
     reset_here = landed & self.takeoff_complete[ids]
     self.takeoff_complete[ids] = torch.where(
       reset_here, torch.zeros_like(reset_here), self.takeoff_complete[ids]
     )
     self._liftoff_step[ids] = torch.where(
-      landed.unsqueeze(-1),
+      contact,
       torch.full_like(self._liftoff_step[ids], -1),
       self._liftoff_step[ids],
     )
