@@ -3,7 +3,7 @@ requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"
 
 [project]
-name = "src"
+name = "lainlab"
 version = "0.1.0"
 description = "LainLab: multi-vendor robot learning, simulation validation, and deployment tools for mjlab 1.6"
 readme = "README.md"

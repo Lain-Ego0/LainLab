@@ -5,7 +5,8 @@
 ### Breaking
 
 - Python 包由 `lloco` 平铺为 `src.*`（`src/lloco/**` → `src/**`），发行包名由 `lloco`
-  改为 `src`；`lloco-train` / `lloco-play` / `lloco-list-envs` / `lloco-webui` /
+  改为 `lainlab`（包路径仍是 `src.*`，不再占用 PyPI 上已被使用的 `src` 名称）；
+  `lloco-train` / `lloco-play` / `lloco-list-envs` / `lloco-webui` /
   `lloco-workbench` 入口移除，改用 `src-train` / `src-play` / `src-list-envs` /
   `src-webui` / `src-workbench`（`train` / `play` / `list-envs` / `webui` 保持不变）。
 - 移除 `simulate/` 下的 Unitree MuJoCo / SDK2 仿真桥源码；仓库不再内置实机桥接。
