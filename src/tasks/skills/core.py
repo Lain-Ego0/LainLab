@@ -326,9 +326,10 @@ def register_skills_profile(
     learning_rate=learning_rate,
     entropy_coef=entropy_coef,
   )
-  # One output head per skill on the shared trunk; see `SkillHeadedActor` for why
-  # a single shared output layer could not serve all four (docs section 5.8.1).
-  rl_cfg.actor.class_name = "src.tasks.skills.rl:SkillHeadedActor"
+  # Shared head plus a per-skill residual initialised to zero; see
+  # `SharedResidualActor` for why neither a flat head nor independent per-skill
+  # heads is the right default (docs section 5.8).
+  rl_cfg.actor.class_name = "src.tasks.skills.rl:SharedResidualActor"
   register_mjlab_task(
     task_id=task_id,
     env_cfg=env_cfg,

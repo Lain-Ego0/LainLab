@@ -324,7 +324,7 @@ def test_bc_artifact_loads_into_the_policy_the_evaluator_builds() -> None:
   try:
     agent_cfg = load_rl_cfg(TASK_ID)
     assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
-    assert agent_cfg.actor.class_name.endswith("SkillHeadedActor")
+    assert agent_cfg.actor.class_name.endswith("SharedResidualActor")
     wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     runner_cls = load_runner_cls(TASK_ID)
     assert runner_cls is not None
@@ -352,17 +352,37 @@ def test_bc_artifact_loads_into_the_policy_the_evaluator_builds() -> None:
     env.close()
 
 
-def test_each_skill_has_its_own_head_on_a_shared_trunk() -> None:
-  """One output head per skill; the trunk is genuinely shared."""
+def test_skill_residuals_start_as_a_no_op() -> None:
+  """The registered architecture must *start* as the flat single-head policy.
+
+  This is the whole reason for the residual form: independent per-skill heads
+  measured worse on handover (aggregate 0.9255 vs 0.9389, `handstand->walk`
+  0.491 vs 0.678), so the default has to begin from the flat behaviour and earn
+  any specialisation from data. A non-zero residual init would silently give
+  that up while still passing every other test.
+  """
   from src.skills.bc import build_student
 
   student = build_student("cpu")
-  assert student.num_skills == len(SKILL_NAMES)
   state = student.state_dict()
-  head_keys = [key for key in state if key.startswith("heads.")]
-  assert len(head_keys) == 2 * len(SKILL_NAMES), head_keys
-  trunk_keys = [key for key in state if key.startswith("mlp.")]
-  assert trunk_keys, "the shared trunk disappeared"
+  assert student.num_skills == len(SKILL_NAMES)
+  assert any(key.startswith("mlp.") for key in state), "the shared trunk is gone"
+  assert any(key.startswith("head.") for key in state), "the shared head is gone"
+  residual_keys = [key for key in state if key.startswith("residuals.")]
+  assert len(residual_keys) == 2 * len(SKILL_NAMES), residual_keys
+  for key in residual_keys:
+    assert float(state[key].abs().max()) == 0.0, f"{key} is not zero-initialised"
+
+  # With the residuals at zero, every skill must produce the shared head's
+  # output; the residual is the only per-skill part.
+  obs = torch.zeros(len(SKILL_NAMES), STUDENT_OBS_DIM)
+  obs[:, 0] = 0.3
+  for index in range(len(SKILL_NAMES)):
+    obs[index, SKILL_ONE_HOT_SLICE.start + index] = 1.0
+  with torch.no_grad():
+    actions = _tensor(student(_tensor_dict(obs)))
+  assert student.skill_index(obs).tolist() == list(range(len(SKILL_NAMES)))
+  assert actions.shape == (len(SKILL_NAMES), 12)
 
   # Identical observations, different skill token -> different actions. This is
   # the property a single shared output layer cannot have.

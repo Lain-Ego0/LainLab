@@ -1,13 +1,21 @@
 """Networks and runner used by the multi-skill task.
 
-The task is one policy over four mutually exclusive behaviours, which is only
-sound if the network can represent them without sacrificing one for another. A
-single shared output layer cannot: measured (docs section 5.8.1), adding the
-512k-sample moving-jump dataset to the clone pushed the walk velocity error from
-0.0569 to 0.0649 m/s while handstand and get-up stayed identical, and up-weighting
-the walk data did not recover it (0.0642 at 2x, 0.0685 at 3x). The trunk has to
-be shared -- that is what makes it one policy -- but the *output* does not, so
-each skill gets its own head.
+One policy over four mutually exclusive behaviours is only sound if the network
+can represent them without sacrificing one for another, and the measurements
+(docs section 5.8) pin down the trade-off:
+
+- a single shared output layer interpolates one continuous function across
+  skills, which is a *good* inductive bias for handover (transition aggregate
+  0.9389, `handstand->walk` 0.678) but leaves each skill fighting for capacity;
+- one head per skill removes that fight but destroys the continuity: with no
+  handover samples in the cloning set the aggregate fell to 0.9255 and
+  `handstand->walk` to 0.491. Adding handover samples recovered only part of it
+  (0.9301 / 0.552).
+
+So the default is a shared head *plus* a per-skill residual whose weights start
+at zero: at initialisation the network *is* the flat policy, so it cannot be
+worse than it on handover, and per-skill capacity is added only where the data
+supports specialisation.
 
 The runner is unchanged in what it optimises; it exists because a
 behaviour-cloning artifact contains only the actor, while the stock training path
@@ -44,13 +52,14 @@ class SkillOnPolicyRunner(MjlabOnPolicyRunner):
     )
 
 
-class SkillHeadedActor(MLPModel):
-  """``MLPModel`` whose output layer is one head per skill.
+class SkillConditionedActor(MLPModel):
+  """``MLPModel`` whose output can be specialised per skill.
 
   The trunk, the observation normalizer, the distribution and therefore every
   state-dict key of the hidden layers are exactly the baseline's; only the final
-  ``Linear`` is replaced by ``len(SKILL_NAMES)`` of them, selected by the one-hot
-  skill token that the unified observation already carries.
+  ``Linear`` is replaced, by whatever :meth:`head_output` builds. Subclasses
+  decide how the one-hot skill token that the unified observation already
+  carries is used.
 
   Registered as the task's actor via ``RslRlModelCfg.class_name``, so the same
   class is built by PPO training, by ``opendoge-bc`` and by ``opendoge-eval``.
@@ -78,11 +87,13 @@ class SkillHeadedActor(MLPModel):
       obs_normalization,
       distribution_cfg,
     )
+    self.output_dim = output_dim
     dims = list(hidden_dims)
     if any(dim <= 0 for dim in dims):
       raise ValueError(
-        f"SkillHeadedActor needs explicit hidden dims, got {hidden_dims}; the "
-        "trunk is rebuilt from them, so the -1 'infer' convention is not supported"
+        f"{type(self).__name__} needs explicit hidden dims, got {hidden_dims}; "
+        "the trunk is rebuilt from them, so the -1 'infer' convention is not "
+        "supported"
       )
     if num_skills != len(SKILL_NAMES):
       raise ValueError(f"expected {len(SKILL_NAMES)} skills, got {num_skills}")
@@ -90,15 +101,12 @@ class SkillHeadedActor(MLPModel):
     # Same trunk as the baseline MLP: every hidden layer, stopping before the
     # output layer that the heads replace.
     self.mlp = MLP(self._get_latent_dim(), dims[-1], dims[:-1], activation)
-    heads = [nn.Linear(dims[-1], output_dim) for _ in range(num_skills)]
-    self.heads = nn.ModuleList(heads)
-    for head in heads:
-      nn.init.orthogonal_(head.weight, gain=1.0)
-      nn.init.zeros_(head.bias)
+    self.trunk_dim = dims[-1]
+    self.num_skills = num_skills
+    self.build_heads()
 
-  @property
-  def num_skills(self) -> int:
-    return len(self.heads)
+  def build_heads(self) -> None:
+    raise NotImplementedError
 
   def raw_observation(self, obs: TensorDict) -> torch.Tensor:
     """The model input before normalization: the same concatenation as the latent.
@@ -109,23 +117,14 @@ class SkillHeadedActor(MLPModel):
     return torch.cat([obs[group] for group in self.obs_groups], dim=-1)
 
   def skill_index(self, actor_obs: torch.Tensor) -> torch.Tensor:
-    """Which head each row of the raw actor observation selects."""
+    """Which skill's head each row of the raw actor observation selects."""
     return actor_obs[..., SKILL_ONE_HOT_SLICE].argmax(dim=-1)
 
-  def head_output(self, latent: torch.Tensor, actor_obs: torch.Tensor) -> torch.Tensor:
-    """Apply the selected head to the trunk features.
+  def skill_one_hot(self, actor_obs: torch.Tensor, like: torch.Tensor) -> torch.Tensor:
+    return actor_obs[..., SKILL_ONE_HOT_SLICE].to(like.dtype)
 
-    Written as a one-hot weighted sum rather than an index lookup so the graph
-    stays differentiable and exports to ONNX without a gather; for a genuine
-    one-hot it is exactly head selection.
-    """
-    trunk = self.mlp(latent)
-    one_hot = actor_obs[..., SKILL_ONE_HOT_SLICE].to(trunk.dtype)
-    heads = list(self.heads)
-    out = one_hot[..., 0:1] * heads[0](trunk)
-    for index in range(1, self.num_skills):
-      out = out + one_hot[..., index : index + 1] * heads[index](trunk)
-    return out
+  def head_output(self, latent: torch.Tensor, actor_obs: torch.Tensor) -> torch.Tensor:
+    raise NotImplementedError
 
   def forward(
     self,
@@ -146,3 +145,70 @@ class SkillHeadedActor(MLPModel):
         return self.distribution.sample()
       return self.distribution.deterministic_output(mlp_output)
     return mlp_output
+
+
+class SkillHeadedActor(SkillConditionedActor):
+  """One independent head per skill (the measured ablation, not the default).
+
+  Kept because it is what established that per-skill capacity alone costs
+  handover quality; see the module docstring for the numbers.
+  """
+
+  def build_heads(self) -> None:
+    heads = [
+      nn.Linear(self.trunk_dim, self.output_dim) for _ in range(self.num_skills)
+    ]
+    self.heads = nn.ModuleList(heads)
+    for head in heads:
+      nn.init.orthogonal_(head.weight, gain=1.0)
+      nn.init.zeros_(head.bias)
+
+  def head_output(self, latent: torch.Tensor, actor_obs: torch.Tensor) -> torch.Tensor:
+    """Apply the selected head to the trunk features.
+
+    Written as a one-hot weighted sum rather than an index lookup so the graph
+    stays differentiable and exports to ONNX without a gather; for a genuine
+    one-hot it is exactly head selection.
+    """
+    trunk = self.mlp(latent)
+    one_hot = self.skill_one_hot(actor_obs, trunk)
+    heads = list(self.heads)
+    out = one_hot[..., 0:1] * heads[0](trunk)
+    for index in range(1, self.num_skills):
+      out = out + one_hot[..., index : index + 1] * heads[index](trunk)
+    return out
+
+
+class SharedResidualActor(SkillConditionedActor):
+  """One shared head plus a per-skill residual, residual initialised to zero.
+
+  At initialisation every residual contributes exactly zero, so the network is
+  the flat single-head policy: handover behaviour starts from the variant that
+  measured best (aggregate 0.9389, `handstand->walk` 0.678) instead of from four
+  unrelated functions (0.9255 / 0.491). Training then adds per-skill
+  specialisation only where the data asks for it.
+  """
+
+  def build_heads(self) -> None:
+    self.head = nn.Linear(self.trunk_dim, self.output_dim)
+    nn.init.orthogonal_(self.head.weight, gain=1.0)
+    nn.init.zeros_(self.head.bias)
+    residuals = [
+      nn.Linear(self.trunk_dim, self.output_dim) for _ in range(self.num_skills)
+    ]
+    self.residuals = nn.ModuleList(residuals)
+    for residual in residuals:
+      # Zero, not orthogonal: the residual has to be a no-op at initialisation,
+      # which is the whole point of the architecture.
+      nn.init.zeros_(residual.weight)
+      nn.init.zeros_(residual.bias)
+
+  def head_output(self, latent: torch.Tensor, actor_obs: torch.Tensor) -> torch.Tensor:
+    trunk = self.mlp(latent)
+    one_hot = self.skill_one_hot(actor_obs, trunk)
+    out = self.head(trunk)
+    residuals = list(self.residuals)
+    for index in range(1, self.num_skills):
+      out = out + one_hot[..., index : index + 1] * residuals[index](trunk)
+    out = out + one_hot[..., 0:1] * residuals[0](trunk)
+    return out

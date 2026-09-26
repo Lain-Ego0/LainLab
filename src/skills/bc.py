@@ -25,25 +25,36 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+from rsl_rl.utils import resolve_callable
 from tensordict import TensorDict
 
-from src.skills.collect import SkillDataset
+from src.skills.collect import SKILLS_TASK_ID, SkillDataset
 from src.tasks.skills.layout import STUDENT_OBS_DIM
-from src.tasks.skills.rl import SkillHeadedActor
+from src.tasks.skills.rl import SkillConditionedActor
 
 OBS_DIM = STUDENT_OBS_DIM
 ACTION_DIM = 12
 HIDDEN_DIMS = (512, 256, 128)
 
 
-def build_student(device: str) -> SkillHeadedActor:
+def build_student(device: str) -> SkillConditionedActor:
   """Construct the student with the same architecture and keys as PPO's actor.
 
-  It must be the class the task registers (`SkillHeadedActor`), otherwise the
-  cloned weights would not load into the policy the evaluator builds.
+  The *class* is resolved from the task's registered actor config, not written
+  here: the clone has to be the network `opendoge-eval` builds, and duplicating
+  the name is how the two drift apart. The kwargs below mirror the config the
+  runner passes; `test_bc_artifact_loads_into_the_policy_the_evaluator_builds`
+  asserts the resulting state dicts are identical, so a kwarg that diverges
+  fails the suite instead of silently producing an unloadable artifact.
   """
+  from mjlab.rl import RslRlOnPolicyRunnerCfg
+  from mjlab.tasks.registry import load_rl_cfg
+
+  agent_cfg = load_rl_cfg(SKILLS_TASK_ID)
+  assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
   dummy = TensorDict({"actor": torch.zeros(1, OBS_DIM)}, batch_size=[1])
-  model = SkillHeadedActor(
+  actor_class = resolve_callable(agent_cfg.actor.class_name)
+  model = actor_class(
     obs=dummy,
     obs_groups={"actor": ["actor"]},
     obs_set="actor",
