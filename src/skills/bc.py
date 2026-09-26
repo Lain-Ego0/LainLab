@@ -28,9 +28,9 @@ import torch.nn.functional as F
 from rsl_rl.models.mlp_model import MLPModel
 from tensordict import TensorDict
 
-from src.skills.collect import SkillDataset
+from src.skills.collect import STUDENT_OBS_DIM, SkillDataset
 
-OBS_DIM = 54
+OBS_DIM = STUDENT_OBS_DIM
 ACTION_DIM = 12
 HIDDEN_DIMS = (512, 256, 128)
 

@@ -1,9 +1,9 @@
 """Export a trained skill policy to ONNX.
 
 Deployment needs the policy as a single ONNX graph. For the multi-skill task the
-actor input is the 54-field observation (48 shared proprioceptive fields plus
-one-hot skill and phase), so the exported graph is the whole controller: the
-caller only has to supply the skill token.
+actor input is the 57-field observation (48 shared proprioceptive fields, the
+3-field jump twist command and the one-hot skill token), so the exported graph is
+the whole controller: the caller only has to supply the skill token.
 
 Usage::
 

@@ -12,6 +12,11 @@ import src.tasks  # noqa: F401
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
+from src.skills.collect import (
+  EXPERT_OBS_DIM,
+  SHARED_OBS_DIM,
+  STUDENT_OBS_DIM,
+)
 from src.tasks.skills.mdp.command import (
   SKILL_NAMES,
   SkillCommandCfg,
@@ -77,6 +82,54 @@ def test_observation_extends_the_shared_proprioceptive_block() -> None:
     )
   finally:
     env.close()
+
+
+def test_expert_observation_widths_match_the_unified_layout() -> None:
+  """The slicing contract the whole clone pipeline rests on.
+
+  Each expert's native observation must be a *prefix* of the unified actor
+  observation, in the same field order. If a term is inserted before an
+  expert's block, collecting that skill still runs -- it just labels every
+  sample with an observation the expert never saw. The width constants therefore
+  have to be checked against the environments, not trusted.
+  """
+  from mjlab.tasks.registry import load_env_cfg as load
+
+  unified = list(load(TASK_ID).observations["actor"].terms)
+  assert len(unified) == 9
+  assert ACTOR_PROPRIO_DIM == SHARED_OBS_DIM
+  assert SHARED_OBS_DIM + TWIST_BLOCK_DIM + SKILL_BLOCK_DIM == STUDENT_OBS_DIM
+
+  # Walk, get-up and handstand read exactly the shared prefix.
+  for task_id in (
+    "LainLab-OpenDoge-Flat",
+    "LainLab-OpenDoge-Getup",
+    "LainLab-OpenDoge-Handstand",
+  ):
+    terms = list(load(task_id, play=True).observations["actor"].terms)
+    assert terms == unified[: len(terms)], task_id
+
+  # The jump expert reads the shared prefix plus the twist block right after it.
+  jump_terms = list(
+    load("LainLab-OpenDoge-Jump", play=True).observations["actor"].terms
+  )
+  assert jump_terms == unified[: len(jump_terms)]
+  assert jump_terms[-1] == "jump_twist"
+
+  # Term *names* alone do not pin the widths, so measure the built environments
+  # too: the collector's constants are what actually get sliced.
+  for task_id, expected in (
+    ("LainLab-OpenDoge-Flat", EXPERT_OBS_DIM["walk"]),
+    ("LainLab-OpenDoge-Jump", EXPERT_OBS_DIM["jump"]),
+  ):
+    cfg = load(task_id, play=True)
+    cfg.scene.num_envs = 2
+    env = ManagerBasedRlEnv(cfg, device="cpu")
+    try:
+      observations, _ = env.reset()
+      assert _tensor(observations["actor"]).shape[1] == expected, task_id
+    finally:
+      env.close()
 
 
 def test_every_skill_is_sampled_and_reset_is_skill_specific() -> None:

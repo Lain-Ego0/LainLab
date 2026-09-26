@@ -36,7 +36,7 @@ from tensordict import TensorDict
 import src.tasks  # noqa: F401
 from src.skills.bc import ACTION_DIM, OBS_DIM, build_student, train
 from src.skills.collect import (
-  SHARED_OBS_DIM,
+  EXPERT_OBS_DIM,
   SKILL_SOURCES,
   SKILLS_TASK_ID,
   SkillDataset,
@@ -61,9 +61,9 @@ def _student_action(model, obs: torch.Tensor, device: str) -> torch.Tensor:
     return model(batch)
 
 
-def _expert_action(policy, obs: torch.Tensor, device: str) -> torch.Tensor:
+def _expert_action(policy, obs: torch.Tensor, skill: str, device: str) -> torch.Tensor:
   batch = TensorDict(
-    {"actor": obs[:, :SHARED_OBS_DIM].to(device, torch.float32)},
+    {"actor": obs[:, : EXPERT_OBS_DIM[skill]].to(device, torch.float32)},
     batch_size=[obs.shape[0]],
   )
   with torch.inference_mode():
@@ -97,7 +97,7 @@ def collect_round(
   for _ in range(steps_per_env):
     actor_obs = observations["actor"]
     assert isinstance(actor_obs, torch.Tensor)
-    label = _expert_action(expert_policy, actor_obs, device)
+    label = _expert_action(expert_policy, actor_obs, spec.skill, device)
     if expert_prob > 0.0:
       use_expert = torch.rand(num_envs, device=device) < expert_prob
       student_act = _student_action(student, actor_obs, device)
@@ -164,7 +164,7 @@ def collect_transitions(
     for _ in range(collect_steps):
       actor_obs = observation["actor"]
       assert isinstance(actor_obs, torch.Tensor)
-      label = _expert_action(experts[target], actor_obs, device)
+      label = _expert_action(experts[target], actor_obs, target, device)
       obs_chunks.append(actor_obs.detach().to("cpu", torch.float16))
       label_chunks.append(label.detach().to("cpu", torch.float16))
       with torch.no_grad():

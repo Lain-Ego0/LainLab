@@ -1,10 +1,10 @@
 """Collect expert rollouts for behaviour cloning.
 
 The data is gathered inside the *unified* multi-skill environment so the stored
-observations already have the 54-field student layout. Each expert is a
-single-skill policy whose native observation is exactly the first 48 fields of
-the unified observation -- same field order, same command semantics, same noise
--- so the expert is driven by slicing, not by an adapter that could drift.
+observations already have the student layout. Each expert is a single-skill
+policy whose native observation is a prefix of the unified observation -- same
+field order, same command semantics, same noise -- so the expert is driven by
+slicing, not by an adapter that could drift.
 
 Usage::
 
@@ -28,12 +28,24 @@ from mjlab.utils.torch import configure_torch_backends
 from tensordict import TensorDict
 
 import src.tasks  # noqa: F401
-from src.tasks.skills.mdp.command import SkillCommandTerm
+from src.tasks.skills.mdp.command import SKILL_NAMES, SkillCommandTerm
 
 SKILLS_TASK_ID = "LainLab-OpenDoge-Skills-Flat"
-# The unified actor observation is the shared 48-field proprioceptive block
-# followed by the skill identity block.
+# Unified actor layout: [shared proprio + command 48][jump twist 3][skill 6].
+# The skill block is `one_hot(skill)` plus `(phase_sin, phase_cos)`.
 SHARED_OBS_DIM = 48
+JUMP_TWIST_DIM = 3
+SKILL_OBS_DIM = len(SKILL_NAMES) + 2
+STUDENT_OBS_DIM = SHARED_OBS_DIM + JUMP_TWIST_DIM + SKILL_OBS_DIM
+# Native actor-observation width of each expert. Walk, get-up and handstand read
+# the shared 48 fields; the jump expert additionally consumes the twist block,
+# which sits immediately after them, so it reads the first 51.
+EXPERT_OBS_DIM: dict[str, int] = {
+  "walk": SHARED_OBS_DIM,
+  "getup": SHARED_OBS_DIM,
+  "handstand": SHARED_OBS_DIM,
+  "jump": SHARED_OBS_DIM + JUMP_TWIST_DIM,
+}
 DATA_ROOT = Path("logs/skills_data")
 
 
@@ -115,6 +127,7 @@ def collect(
   )
 
   observations, _ = env.reset()
+  expert_dim = EXPERT_OBS_DIM[skill]
   obs_chunks: list[torch.Tensor] = []
   action_chunks: list[torch.Tensor] = []
   for _ in range(steps_per_env):
@@ -122,7 +135,7 @@ def collect(
     assert isinstance(actor_obs, torch.Tensor)
     with torch.inference_mode():
       expert_obs = TensorDict(
-        {"actor": actor_obs[:, :SHARED_OBS_DIM]}, batch_size=[num_envs]
+        {"actor": actor_obs[:, :expert_dim]}, batch_size=[num_envs]
       )
       actions = policy(expert_obs)
     obs_chunks.append(actor_obs.detach().to("cpu", torch.float16))
@@ -130,11 +143,21 @@ def collect(
     observations, _, _, _, _ = env.step(actions)
 
   env.close()
+  obs = torch.cat(obs_chunks).reshape(-1, obs_chunks[0].shape[-1])
+  # Fail loudly on layout drift: a dataset with the wrong width still trains, it
+  # just trains the wrong thing (the 48-field slice was used for the jump expert
+  # after the twist block was inserted, which would have mislabelled every jump
+  # sample).
+  if obs.shape[1] != STUDENT_OBS_DIM:
+    raise RuntimeError(
+      f"unified observation is {obs.shape[1]}-dim, expected {STUDENT_OBS_DIM}; "
+      "the student layout changed and EXPERT_OBS_DIM must be updated with it"
+    )
   return SkillDataset(
     skill=skill,
     task_id=source.task_id,
     expert_checkpoint=str(checkpoint),
-    obs=torch.cat(obs_chunks).reshape(-1, obs_chunks[0].shape[-1]),
+    obs=obs,
     action=torch.cat(action_chunks).reshape(-1, action_chunks[0].shape[-1]),
   )
 
