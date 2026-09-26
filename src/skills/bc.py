@@ -87,16 +87,23 @@ def train(
   val_indices: dict[str, torch.Tensor] = {}
   obs_by_skill: dict[str, torch.Tensor] = {}
   action_by_skill: dict[str, torch.Tensor] = {}
+  # Several datasets may target the same skill (steady state plus handovers).
+  # Concatenate them rather than letting the last one win: an overwrite here is
+  # silent and would drop the handover frames that per-skill heads need, leaving
+  # a clone that trains fine and cannot hand over.
+  pooled: dict[str, list[SkillDataset]] = {}
   for dataset in datasets:
-    total = dataset.samples
-    permutation = torch.randperm(total, generator=generator)
-    val_count = max(int(total * val_fraction), 1)
-    val_indices[dataset.skill] = permutation[:val_count]
-    train_indices[dataset.skill] = permutation[val_count:]
-    obs_by_skill[dataset.skill] = dataset.obs
-    action_by_skill[dataset.skill] = dataset.action
-
-  skills = [dataset.skill for dataset in datasets]
+    pooled.setdefault(dataset.skill, []).append(dataset)
+  skills = [skill for skill in pooled]
+  for skill, group in pooled.items():
+    obs = torch.cat([dataset.obs for dataset in group])
+    action = torch.cat([dataset.action for dataset in group])
+    permutation = torch.randperm(obs.shape[0], generator=generator)
+    val_count = max(int(obs.shape[0] * val_fraction), 1)
+    val_indices[skill] = permutation[:val_count]
+    train_indices[skill] = permutation[val_count:]
+    obs_by_skill[skill] = obs
+    action_by_skill[skill] = action
   model = build_student(device)
 
   # Seed the observation normalizer from the whole dataset, then freeze it for
