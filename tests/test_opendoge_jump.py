@@ -133,3 +133,59 @@ def test_takeoff_survives_a_foot_landing_while_others_are_airborne() -> None:
   step((false, false, false, false), 5)
   assert bool(state.takeoff_complete[0]), "staggered takeoff was not registered"
   assert float(state.takeoff_spread[0]) == 5.0 - 2.0
+
+
+def test_flight_gate_only_spends_on_a_height_qualified_takeoff() -> None:
+  """The one-flight budget belongs to the jump, not to the gait's suspension.
+
+  A travel gait lifts all four feet without raising the base, so an
+  "airborne inside the window" rule lets those hops spend the budget before the
+  real jump: measured reward 0.0037 and peak rise down to 0.043 m.
+  """
+  cfg = JumpStateCfg(period_s=1000.0, standing_height=0.151, flight_window=(0.10, 0.22))
+  state = JumpState(1, "cpu", cfg)
+  margin_height = cfg.standing_height + cfg.takeoff_margin + 0.001
+
+  def step(
+    contacts: tuple[bool, bool, bool, bool], height: float, phase: float
+  ) -> None:
+    state.phase[0] = phase
+    contact = torch.tensor([contacts])
+    state.update(
+      None,
+      dt=0.01,
+      base_height=torch.tensor([height]),
+      airborne=~contact.any(dim=-1),
+      feet_contact=contact,
+      step_index=torch.tensor([0]),
+    )
+
+  grounded = (True, True, True, True)
+  airborne = (False, False, False, False)
+  in_window = 0.15
+
+  step(grounded, cfg.standing_height, 0.0)
+  # A gait hop inside the window: airborne, but the base never rises.
+  step(airborne, cfg.standing_height + 0.004, in_window)
+  step(grounded, cfg.standing_height, in_window)
+  assert not bool(state.flight_used[0]), "a gait hop spent the jump budget"
+  assert float(state.first_flight_gate()[0]) == 1.0
+
+  # The real jump, also inside the window.
+  step(airborne, margin_height, in_window)
+  step(grounded, cfg.standing_height, in_window)
+  assert bool(state.flight_used[0])
+  assert float(state.first_flight_gate()[0]) == 0.0
+
+  # A second jump in the same cycle does not earn a second budget.
+  step(airborne, margin_height, in_window)
+  step(grounded, cfg.standing_height, in_window)
+  assert float(state.first_flight_gate()[0]) == 0.0
+
+  # ...but the next cycle reopens it: park the clock just before the wrap so the
+  # next update rolls over.
+  step(grounded, cfg.standing_height, 0.99999)
+  assert float(state.first_flight_gate()[0]) == 1.0
+  step(airborne, margin_height, in_window)
+  step(grounded, cfg.standing_height, in_window)
+  assert float(state.first_flight_gate()[0]) == 0.0

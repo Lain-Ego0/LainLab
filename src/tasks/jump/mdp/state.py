@@ -133,14 +133,25 @@ class JumpState:
 
     self._update_takeoff(ids, feet_contact=feet_contact, step_index=step_index)
 
-    # The one-flight budget is spent by a takeoff *inside the jump window*, and
-    # only when that flight ends. Counting any airborne moment instead (the
-    # first version) let the travel gait's own suspension phases -- which also
-    # lift all four feet -- consume the budget before the window opened, and the
-    # flight reward collapsed to 0.004.
+    # The one-flight budget is spent by a *height-qualified* airborne moment
+    # inside the jump window, and only when that flight ends. Two weaker rules
+    # were measured and both fail:
+    #
+    # - "any airborne step in the window" (first version) pays per step, so the
+    #   policy fills the window with short bounces: 3.98 target-height flights
+    #   per cycle against 1.0 intended.
+    # - "the all-four-feet-off-the-ground edge in the window" ties the budget to
+    #   the takeoff bookkeeping, which also fires for the travel gait's
+    #   suspension. Those small hops then spend the budget before the real jump,
+    #   and the flight reward collapsed to 0.0037 while peak rise fell to
+    #   0.043 m.
+    #
+    # Requiring the base to clear the standing height by `takeoff_margin` keeps
+    # the budget for the jump itself: a gait suspension phase does not raise the
+    # base, and a real push-off does.
     low, high = self.cfg.flight_window
     in_window = (self.phase[ids] >= low) & (self.phase[ids] < high)
-    self._in_window_takeoff[ids] |= self._takeoff_edge[ids] & in_window
+    self._in_window_takeoff[ids] |= took_off & in_window
     landed_now = feet_contact[ids].any(dim=-1)
     self.flight_used[ids] |= self._in_window_takeoff[ids] & landed_now
 
