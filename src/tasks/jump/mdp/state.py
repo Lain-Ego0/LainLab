@@ -141,14 +141,18 @@ class JumpState:
     self.takeoff_complete[ids] |= fresh
     self._takeoff_edge[ids] = fresh
 
-    # Landing clears the record so the next jump is measured on its own.
+    # Any landing clears the per-foot record, so the next takeoff is timed on its
+    # own. Clearing only on a *completed* takeoff (the earlier behaviour) left
+    # stale liftoff steps from the previous cycle in the record whenever the
+    # robot took off again before all four had landed, which inflated the
+    # measured spread from a true 0 steps to ~0.9.
     landed = contact.any(dim=-1)
     reset_here = landed & self.takeoff_complete[ids]
     self.takeoff_complete[ids] = torch.where(
       reset_here, torch.zeros_like(reset_here), self.takeoff_complete[ids]
     )
     self._liftoff_step[ids] = torch.where(
-      reset_here.unsqueeze(-1),
+      landed.unsqueeze(-1),
       torch.full_like(self._liftoff_step[ids], -1),
       self._liftoff_step[ids],
     )

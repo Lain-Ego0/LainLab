@@ -148,6 +148,14 @@ def evaluate(
   jump_recoveries = 0
   was_airborne = torch.zeros(num_envs, dtype=torch.bool, device=device)
   was_recovered = torch.zeros(num_envs, dtype=torch.bool, device=device)
+  # Independent four-foot takeoff timing: measured from the contact sensor here
+  # rather than read from the command term, so "the feet left together" is not
+  # just the reward's own bookkeeping reported back.
+  foot_was_contact = torch.zeros(num_envs, 4, dtype=torch.bool, device=device)
+  foot_liftoff = torch.full((num_envs, 4), -1, dtype=torch.long, device=device)
+  step_counter = 0
+  takeoff_pending = torch.zeros(num_envs, dtype=torch.bool, device=device)
+  takeoff_spreads: dict[str, list[float]] = {name: [] for name in names}
 
   observation, _ = env.reset()
   # Single-skill tasks call their command term `twist` or `jump`; the unified
@@ -165,12 +173,59 @@ def evaluate(
     upright = _upright(env)
     command = env.command_manager.get_command(skill_term_name)
     assert command is not None
-    velocity_error = torch.norm(
-      command[:, :2] - env.scene["robot"].data.root_link_lin_vel_b[:, :2], dim=1
-    )
+    # Which block holds the commanded velocity depends on the skill: walking
+    # keeps it in `command`, the jump in a separate twist block (its command
+    # block is full with the phase clock and the takeoff flag). Comparing the
+    # phase block against velocity would produce a meaningless number.
+    commanded_velocity = command[:, :3]
+    is_walk = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    is_jump = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    if isinstance(skill_term, SkillCommandTerm):
+      is_walk = skill_term.skill_is("walk")
+      is_jump = skill_term.skill_is("jump")
+      commanded_velocity = torch.where(
+        is_jump[:, None], skill_term.twist, commanded_velocity
+      )
+    elif hasattr(skill_term, "twist"):  # the standalone jump task
+      commanded_velocity = skill_term.twist  # type: ignore[union-attr]
+      is_jump = torch.ones(num_envs, dtype=torch.bool, device=device)
+    if isinstance(skill_term, SkillCommandTerm):
+      velocity_error = torch.norm(
+        commanded_velocity[:, :2] - env.scene["robot"].data.root_link_lin_vel_b[:, :2],
+        dim=1,
+      )
+      # Only the skills with a velocity command are scored on tracking it.
+      velocity_error = torch.where(
+        is_walk | is_jump, velocity_error, torch.zeros_like(velocity_error)
+      )
+    else:
+      velocity_error = torch.norm(
+        commanded_velocity[:, :2] - env.scene["robot"].data.root_link_lin_vel_b[:, :2],
+        dim=1,
+      )
     contact = _contact_flags(env, "feet_ground_contact")
     feet_down = (contact > 0.5).sum(dim=1).float()
     airborne = feet_down < 0.5
+
+    step_counter += 1
+    foot_contact = contact > 0.5
+    lifted = foot_was_contact & ~foot_contact
+    foot_liftoff = torch.where(
+      lifted, torch.full_like(foot_liftoff, step_counter), foot_liftoff
+    )
+    foot_was_contact = foot_contact
+    all_up = (foot_liftoff >= 0).all(dim=1) & airborne
+    # Edge-triggered: one sample per takeoff, on the first step all four are up.
+    fresh_takeoff = all_up & ~takeoff_pending
+    takeoff_pending |= all_up
+    spread = (foot_liftoff.max(dim=1).values - foot_liftoff.min(dim=1).values).float()
+    landed_now = foot_contact.any(dim=1)
+    takeoff_pending = torch.where(
+      landed_now, torch.zeros_like(takeoff_pending), takeoff_pending
+    )
+    foot_liftoff = torch.where(
+      landed_now[:, None], torch.full_like(foot_liftoff, -1), foot_liftoff
+    )
     robot = env.scene["robot"]
     if start_xy is None:
       start_xy = robot.data.root_link_pos_w[:, :2].clone()
@@ -185,6 +240,8 @@ def evaluate(
 
     drift = torch.norm(robot.data.root_link_pos_w[:, :2] - start_xy, dim=1)
     for name, mask in masks.items():
+      if name == "jump":
+        takeoff_spreads[name].extend(spread[mask & fresh_takeoff].tolist())
       if not bool(mask.any()):
         continue
       bucket = per_skill[name]
@@ -252,6 +309,11 @@ def evaluate(
       ),
       "velocity_error_mean": float(torch.tensor(bucket["velocity_error"]).mean()),
     }
+    if takeoff_spreads.get(name):
+      spreads = torch.tensor(takeoff_spreads[name])
+      entry["takeoff_spread_mean"] = float(spreads.mean())
+      entry["takeoff_spread_max"] = float(spreads.max())
+      entry["takeoff_count"] = int(spreads.numel())
     if bucket["foot_contact"]:
       # Sensor frame order follows the robot profile: FR, FL, RR, RL, so the
       # first two entries are the front feet and the last two the rear pair.
