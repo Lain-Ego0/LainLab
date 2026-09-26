@@ -34,6 +34,7 @@ from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from src.tasks.getup import make_getup_env_cfg
 from src.tasks.handstand import make_handstand_env_cfg
 from src.tasks.jump import make_jump_env_cfg
+from src.tasks.jump.mdp import command as jump_command
 from src.tasks.rl import make_ppo_runner_cfg
 from src.tasks.skills.mdp import curriculums as skills_curriculums
 from src.tasks.skills.mdp import events as skills_events
@@ -100,6 +101,8 @@ def _skills_command_cfg(
   jump_period_s: float,
   switch_prob: float,
   play: bool,
+  twist_ranges: tuple[tuple[float, float], ...],
+  spread_tolerance: float,
 ) -> SkillCommandCfg:
   return SkillCommandCfg(
     entity_name="robot",
@@ -109,6 +112,8 @@ def _skills_command_cfg(
     walk_command_ranges=(
       profile.play_command_ranges if play else profile.command_ranges
     ),
+    jump_twist_ranges=twist_ranges,
+    jump_spread_tolerance=spread_tolerance,
     jump_period_s=jump_period_s,
     standing_height=standing_height,
     switch_prob=switch_prob,
@@ -156,6 +161,8 @@ def make_skills_env_cfg(
   jump_rewards = jump_cfg.rewards
 
   # Reset distributions come from each sub-task, never from a shared default.
+  jump_command_cfg = jump_cfg.commands["jump"]
+  assert isinstance(jump_command_cfg, jump_command.JumpCommandCfg)
   standing_resets = {
     "walk": _harvest_standing_reset(walk_cfg),
     "handstand": _harvest_standing_reset(handstand_cfg),
@@ -182,10 +189,20 @@ def make_skills_env_cfg(
       jump_period_s=jump_period_s,
       switch_prob=switch_prob,
       play=play,
+      twist_ranges=jump_command_cfg.twist_ranges,
+      spread_tolerance=jump_command_cfg.spread_tolerance,
     )
   }
   skill_observation = ObservationTermCfg(
     func=skills_utils.skill_identity_observation,
+    params={"command_name": SKILL_COMMAND_NAME},
+  )
+  # Order matters and is what keeps every expert driveable by slicing:
+  # [proprio 48][command 3][jump_twist 3][skill identity 6]. The first 48 fields
+  # are the walking/handstand/get-up native observation, and the first 51 are the
+  # jump's (48 plus its twist block).
+  twist_observation = ObservationTermCfg(
+    func=skills_utils.jump_twist_observation,
     params={"command_name": SKILL_COMMAND_NAME},
   )
   for group in ("actor", "critic"):
@@ -193,6 +210,7 @@ def make_skills_env_cfg(
       func=envs_mdp.generated_commands,
       params={"command_name": SKILL_COMMAND_NAME},
     )
+    cfg.observations[group].terms["jump_twist"] = twist_observation
     cfg.observations[group].terms["skill"] = skill_observation
 
   # Masked reward composition: nothing is retyped, only re-scoped.

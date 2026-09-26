@@ -12,8 +12,9 @@ from mjlab.tasks.registry import load_env_cfg
 from src.tasks.jump.mdp.command import JumpCommand
 
 TASK_ID = "LainLab-OpenDoge-Jump"
-SHARED_ACTOR_DIM = 48
-SHARED_CRITIC_DIM = 72
+# 48 shared proprioceptive fields plus the jump's own twist command.
+SHARED_ACTOR_DIM = 51
+SHARED_CRITIC_DIM = 75
 
 
 def _tensor(value: object) -> torch.Tensor:
@@ -33,7 +34,10 @@ def test_jump_matches_shared_observation_contract() -> None:
   # The command term is replaced, but the observation term name, position and
   # width must stay identical to the velocity / handstand / get-up tasks.
   assert list(cfg.commands) == ["jump"]
-  assert list(cfg.observations["actor"].terms)[-1] == "command"
+  terms = list(cfg.observations["actor"].terms)
+  # `command` stays the last of the shared 48; the twist block follows it, which
+  # is what makes the unified observation's first 51 fields this task's own.
+  assert terms[-2:] == ["command", "jump_twist"]
   assert cfg.observations["actor"].terms["command"].params["command_name"] == "jump"
   assert "height_scan" not in cfg.observations["actor"].terms
 
@@ -84,7 +88,7 @@ def test_standing_still_earns_no_jump_reward() -> None:
     values = dict(
       zip(names, env.reward_manager._step_reward.mean(dim=0).tolist(), strict=True)
     )
-    for term in ("flight", "apex_height", "settle"):
+    for term in ("flight", "apex_height", "takeoff_simultaneity"):
       assert abs(values[term]) < 1e-6, (term, values[term])
     # Only the survival terms should be paying.
     assert values["alive"] > 0.9

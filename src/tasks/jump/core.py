@@ -2,12 +2,14 @@
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
+from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 
 from src.tasks.jump.mdp import command as jump_command
+from src.tasks.jump.mdp import observations as jump_observations
 from src.tasks.jump.mdp import rewards as jump_rewards
 from src.tasks.rl import make_ppo_runner_cfg
 from src.tasks.velocity.core import VelocityRobotProfile, _make_base_env_cfg
@@ -37,7 +39,11 @@ def _configure_flat_terrain(cfg: ManagerBasedRlEnvCfg) -> None:
 
 
 def _configure_jump_command(
-  cfg: ManagerBasedRlEnvCfg, *, period_s: float, standing_height: float
+  cfg: ManagerBasedRlEnvCfg,
+  *,
+  period_s: float,
+  standing_height: float,
+  twist_ranges: tuple[tuple[float, float], ...],
 ) -> None:
   """Swap the twist command for the jump phase clock.
 
@@ -52,11 +58,19 @@ def _configure_jump_command(
       resampling_time_range=(1.0e9, 1.0e9),
       period_s=period_s,
       standing_height=standing_height,
+      twist_ranges=twist_ranges,
     )
   }
   for group in ("actor", "critic"):
     term = cfg.observations[group].terms["command"]
     term.params = {"command_name": "jump"}
+    # Appended after `command`, so the first 48 fields stay identical to the
+    # walking / handstand / get-up tasks and the first 51 are this task's own
+    # native observation.
+    cfg.observations[group].terms["jump_twist"] = ObservationTermCfg(
+      func=jump_observations.jump_twist_command,
+      params={"command_name": "jump"},
+    )
 
 
 def _configure_jump_rewards(
@@ -74,17 +88,22 @@ def _configure_jump_rewards(
         "tolerance": 0.035,
       },
     ),
-    "settle": RewardTermCfg(
-      func=jump_rewards.settle,
+    # Carries the commanded horizontal velocity through the air and after
+    # landing; replaces the old in-place penalty, which fought a moving jump.
+    "twist_tracking": RewardTermCfg(
+      func=jump_rewards.twist_tracking,
       weight=2.0,
-      params={"standing_height": standing_height, "tolerance": 0.06},
+      params={"std_linear": 0.35, "std_angular": 0.5},
+    ),
+    # All four feet leaving the ground together.
+    "takeoff_simultaneity": RewardTermCfg(
+      func=jump_rewards.takeoff_simultaneity, weight=2.0
     ),
     "upright": RewardTermCfg(func=jump_rewards.upright, weight=1.0),
     "alive": RewardTermCfg(func=envs_mdp.is_alive, weight=1.0),
     "failure": RewardTermCfg(func=jump_rewards.jump_failure, weight=-5.0),
     # Regularization.
     "soft_landing": RewardTermCfg(func=jump_rewards.soft_landing, weight=-0.5),
-    "planar_vel": RewardTermCfg(func=jump_rewards.planar_velocity_penalty, weight=-0.2),
     "torques": RewardTermCfg(func=envs_mdp.joint_torques_l2, weight=-0.0005),
     "dof_vel": RewardTermCfg(func=envs_mdp.joint_vel_l2, weight=-0.002),
     "action_rate": RewardTermCfg(func=envs_mdp.action_rate_l2, weight=-0.02),
@@ -99,6 +118,11 @@ def make_jump_env_cfg(
   standing_height: float,
   target_rise: float = 0.05,
   period_s: float = 2.5,
+  twist_ranges: tuple[tuple[float, float], ...] = (
+    (-0.3, 0.3),
+    (-0.2, 0.2),
+    (-0.4, 0.4),
+  ),
   episode_length_s: float = 7.5,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
@@ -108,7 +132,12 @@ def make_jump_env_cfg(
   cfg.episode_length_s = episode_length_s
   cfg.curriculum = {}
   _configure_flat_terrain(cfg)
-  _configure_jump_command(cfg, period_s=period_s, standing_height=standing_height)
+  _configure_jump_command(
+    cfg,
+    period_s=period_s,
+    standing_height=standing_height,
+    twist_ranges=twist_ranges,
+  )
   _configure_jump_rewards(cfg, standing_height=standing_height, target_rise=target_rise)
   # Everything else (friction/com/gain randomization, push_robot) stays as the
   # shared velocity environment set it up; only the reset changes.
@@ -146,6 +175,11 @@ def register_jump_profile(
   standing_height: float,
   target_rise: float = 0.05,
   period_s: float = 2.5,
+  twist_ranges: tuple[tuple[float, float], ...] = (
+    (-0.3, 0.3),
+    (-0.2, 0.2),
+    (-0.4, 0.4),
+  ),
   max_iterations: int = 5_000,
 ) -> None:
   """Register a train and play task for one robot profile."""
@@ -154,6 +188,7 @@ def register_jump_profile(
     standing_height=standing_height,
     target_rise=target_rise,
     period_s=period_s,
+    twist_ranges=twist_ranges,
     play=False,
   )
   play_cfg = make_jump_env_cfg(
@@ -161,6 +196,7 @@ def register_jump_profile(
     standing_height=standing_height,
     target_rise=target_rise,
     period_s=period_s,
+    twist_ranges=twist_ranges,
     play=True,
   )
   rl_cfg = make_ppo_runner_cfg(

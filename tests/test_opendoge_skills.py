@@ -19,8 +19,9 @@ from src.tasks.skills.mdp.command import (
 )
 
 TASK_ID = "LainLab-OpenDoge-Skills-Flat"
-ACTOR_PROPRIO_DIM = 48
+ACTOR_PROPRIO_DIM = 48  # includes the 3-wide `command` block
 CRITIC_PROPRIO_DIM = 72  # 48 shared fields plus foot height/contact terms
+TWIST_BLOCK_DIM = 3  # the jump's commanded [vx, vy, wz]
 SKILL_BLOCK_DIM = len(SKILL_NAMES) + 2  # one-hot plus phase sin/cos
 NUM_ENVS = 64
 
@@ -57,7 +58,10 @@ def test_observation_extends_the_shared_proprioceptive_block() -> None:
     "actions",
     "command",
   ]
-  assert terms[7] == "skill"
+  # The order is what keeps every expert driveable by slicing: the shared 48
+  # fields first, then the jump's twist block, then the skill identity block.
+  assert terms[7] == "jump_twist"
+  assert terms[8] == "skill"
   assert "height_scan" not in terms
 
   env = _build(2)
@@ -65,11 +69,11 @@ def test_observation_extends_the_shared_proprioceptive_block() -> None:
     observations, _ = env.reset()
     assert _tensor(observations["actor"]).shape == (
       2,
-      ACTOR_PROPRIO_DIM + SKILL_BLOCK_DIM,
+      ACTOR_PROPRIO_DIM + TWIST_BLOCK_DIM + SKILL_BLOCK_DIM,
     )
     assert _tensor(observations["critic"]).shape == (
       2,
-      CRITIC_PROPRIO_DIM + SKILL_BLOCK_DIM,
+      CRITIC_PROPRIO_DIM + TWIST_BLOCK_DIM + SKILL_BLOCK_DIM,
     )
   finally:
     env.close()

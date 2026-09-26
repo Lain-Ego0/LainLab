@@ -6,8 +6,9 @@ The shaping is built so that standing still is unprofitable:
   a handstand-style two-foot pose earns nothing
 - ``apex_height`` peaks at ``standing + target_rise``, which is above what leg
   extension alone can reach (34 mm of stroke), so the policy must break contact
-- ``settle`` pays for being back at the standing height with all feet down, so
-  the cycle has to complete with a recovery
+- ``twist_tracking`` pays for carrying the commanded horizontal velocity through
+  the air and after landing, so the jump translates instead of hopping in place
+- ``takeoff_simultaneity`` pays when all four feet leave the ground together
 - ``failure`` punishes an episode that times out without ever leaving the ground
 
 State (peak height, ``left_ground``) lives in ``JumpCommand``.
@@ -101,29 +102,6 @@ def apex_height(
   return height_reward * phase_window(term.phase, *window)
 
 
-def settle(
-  env: ManagerBasedRlEnv,
-  command_name: str = "jump",
-  sensor_name: str = "feet_ground_contact",
-  standing_height: float = 0.151,
-  tolerance: float = 0.06,
-  window: tuple[float, float] = (0.45, 1.0),
-) -> torch.Tensor:
-  """Reward recovering to a planted standing pose, in the recovery window.
-
-  Two gates, both necessary. The phase window stops the policy from simply
-  standing still all cycle (that would otherwise be nearly as profitable as
-  jumping), and the ``left_ground`` latch stops the very first cycle from
-  paying for a recovery that never happened.
-  """
-  term = _jump_term(env, command_name)
-  error = (term.base_height() - standing_height) / tolerance
-  height_reward = torch.clamp(1.0 - torch.square(error), min=0.0)
-  all_feet_down = (_contact_flags(env, sensor_name).amin(dim=1) > 0.5).float()
-  recovery = phase_window(term.phase, *window)
-  return height_reward * all_feet_down * recovery * term.left_ground.float()
-
-
 def upright(
   env: ManagerBasedRlEnv,
   target: tuple[float, float, float] = _DEFAULT_GRAVITY_UP,
@@ -147,13 +125,53 @@ def soft_landing(
   return downward * any_contact
 
 
-def planar_velocity_penalty(
+def twist_tracking(
   env: ManagerBasedRlEnv,
+  command_name: str = "jump",
+  std_linear: float = 0.35,
+  std_angular: float = 0.5,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize drifting: the jump is in place."""
+  """Reward carrying the commanded horizontal velocity through the jump.
+
+  Active over the whole cycle on purpose: the point is that the robot keeps
+  tracking while it leaves the ground and after it lands, not that it stops
+  still. This is what replaced the old in-place planar-velocity penalty, which
+  actively fought a moving jump.
+  """
   asset: Entity = env.scene[asset_cfg.name]
-  return torch.sum(torch.square(asset.data.root_link_lin_vel_w[:, :2]), dim=1)
+  command = _jump_term(env, command_name).twist
+  linear_error = torch.sum(
+    torch.square(command[:, :2] - asset.data.root_link_lin_vel_b[:, :2]), dim=1
+  )
+  angular_error = torch.square(command[:, 2] - asset.data.root_link_ang_vel_b[:, 2])
+  return torch.exp(-linear_error / std_linear**2) * torch.exp(
+    -angular_error / std_angular**2
+  )
+
+
+def takeoff_simultaneity(
+  env: ManagerBasedRlEnv,
+  command_name: str = "jump",
+  window: tuple[float, float] = (0.10, 0.40),
+) -> torch.Tensor:
+  """Reward all four feet leaving the ground together.
+
+  Paid continuously through the flight window (rather than once) so it carries
+  weight against the flight reward it is meant to shape, and scaled by how
+  tightly the four liftoffs clustered. A jump that pushes off one leg at a time
+  scores ~0 here even though it still earns flight reward.
+  """
+  term = _jump_term(env, command_name)
+  simultaneity = term.simultaneity()
+  env.extras.setdefault("log", {})["Metrics/jump_takeoff_spread"] = (
+    term.takeoff_spread[term.takeoff_complete].mean()
+    if bool(term.takeoff_complete.any())
+    else torch.zeros((), device=env.device)
+  )
+  return (
+    simultaneity * term.takeoff_complete.float() * phase_window(term.phase, *window)
+  )
 
 
 def jump_failure(

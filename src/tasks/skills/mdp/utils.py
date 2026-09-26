@@ -46,6 +46,18 @@ def skill_identity_observation(
   return torch.cat((one_hot, term.skill_phase()), dim=-1)
 
 
+def jump_twist_observation(
+  env: ManagerBasedRlEnv,
+  command_name: str = DEFAULT_COMMAND_NAME,
+) -> torch.Tensor:
+  """The jump's commanded ``[vx, vy, wz]``, zeros for every other skill.
+
+  Reproduces the jump task's own ``jump_twist`` term so the first 51 fields of
+  the unified observation are that expert's native observation.
+  """
+  return skill_term(env, command_name).twist
+
+
 def retarget_command_params(
   func: Callable[..., Any] | type, params: dict[str, Any]
 ) -> dict[str, Any]:

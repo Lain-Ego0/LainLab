@@ -29,12 +29,19 @@ from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.math import sample_uniform
 
+from src.tasks.jump.mdp.state import JumpState, JumpStateCfg
+
 if TYPE_CHECKING:
   import viser
 
 SKILL_NAMES = ("walk", "handstand", "getup", "jump")
-VELOCITY_SKILLS = ("walk",)
-"""Skills whose command block is a velocity twist; driveable from the viewer."""
+VELOCITY_SKILLS = ("walk", "jump")
+"""Skills with a viewer-driveable velocity.
+
+Walking keeps it in the ``command`` block; the jump keeps it in the separate
+``jump_twist`` block, because its command block is already full with the phase
+clock and the takeoff flag.
+"""
 
 
 @dataclass(kw_only=True)
@@ -56,6 +63,14 @@ class SkillCommandCfg(CommandTermCfg):
   jump_period_s: float = 2.5
   standing_height: float = 0.151
   takeoff_margin: float = 0.015
+  jump_twist_ranges: tuple[tuple[float, float], ...] = (
+    (-0.3, 0.3),
+    (-0.2, 0.2),
+    (-0.4, 0.4),
+  )
+  """Commanded ``[vx, vy, wz]`` carried through the jump; harvested from the jump task."""
+  jump_spread_tolerance: float = 2.0
+  """Takeoff spread (control steps) at which the jump simultaneity reward halves."""
   switch_prob: float = 0.0
   """Per-step probability of switching skill mid-episode (transition training)."""
   skill_weights: tuple[float, ...] = field(default_factory=tuple)
@@ -75,11 +90,19 @@ class SkillCommandTerm(CommandTerm):
     self.robot: Entity = env.scene[cfg.entity_name]
     self.skill = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self._command = torch.zeros(self.num_envs, 3, device=self.device)
-    self.phase = torch.zeros(self.num_envs, device=self.device)
-    self.peak_height = torch.zeros(self.num_envs, device=self.device)
-    self.left_ground = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-    self.grounded_once = torch.zeros(
-      self.num_envs, dtype=torch.bool, device=self.device
+    # Jump bookkeeping lives in the shared JumpState so this term and the jump
+    # task's JumpCommand cannot diverge (they did once, and the jump expert
+    # silently stopped taking off inside this environment).
+    self.jump = JumpState(
+      self.num_envs,
+      self.device,
+      JumpStateCfg(
+        period_s=cfg.jump_period_s,
+        standing_height=cfg.standing_height,
+        takeoff_margin=cfg.takeoff_margin,
+        twist_ranges=cfg.jump_twist_ranges,
+        spread_tolerance=cfg.jump_spread_tolerance,
+      ),
     )
     self._walk_time_left = torch.zeros(self.num_envs, device=self.device)
     # The reset event runs *before* the command manager (see
@@ -119,6 +142,33 @@ class SkillCommandTerm(CommandTerm):
   def skill_is(self, name: str) -> torch.Tensor:
     """Boolean mask of the environments currently running ``name``."""
     return self.skill == self.skill_index(name)
+
+  @property
+  def phase(self) -> torch.Tensor:
+    return self.jump.phase
+
+  @property
+  def peak_height(self) -> torch.Tensor:
+    return self.jump.peak_height
+
+  @property
+  def left_ground(self) -> torch.Tensor:
+    return self.jump.left_ground
+
+  @property
+  def twist(self) -> torch.Tensor:
+    return self.jump.twist
+
+  @property
+  def takeoff_spread(self) -> torch.Tensor:
+    return self.jump.takeoff_spread
+
+  @property
+  def takeoff_complete(self) -> torch.Tensor:
+    return self.jump.takeoff_complete
+
+  def simultaneity(self) -> torch.Tensor:
+    return self.jump.simultaneity()
 
   def skill_phase(self) -> torch.Tensor:
     """``[sin, cos]`` of the phase clock, shape ``[B, 2]``."""
@@ -247,6 +297,16 @@ class SkillCommandTerm(CommandTerm):
 
   # -- jump state, matching `JumpCommand` for reward reuse -------------------
 
+  def feet_contact(self) -> torch.Tensor:
+    """Per-foot contact flags, shape ``[B, 4]``."""
+    sensor: ContactSensor = self._env.scene[self.cfg.contact_sensor_name]
+    found = sensor.data.found
+    assert found is not None, "Skills need a contact sensor that tracks 'found'."
+    flags = (found > 0).to(torch.float32)
+    if flags.dim() == 3:
+      flags = flags.amax(dim=-1)
+    return flags > 0.5
+
   def airborne(self) -> torch.Tensor:
     sensor: ContactSensor = self._env.scene[self.cfg.contact_sensor_name]
     found = sensor.data.found
@@ -294,10 +354,7 @@ class SkillCommandTerm(CommandTerm):
     self.skill[env_ids] = torch.where(override >= 0, override, sampled)
 
   def _reset_skill_state(self, env_ids: torch.Tensor) -> None:
-    self.phase[env_ids] = 0.0
-    self.peak_height[env_ids] = self.cfg.standing_height
-    self.left_ground[env_ids] = False
-    self.grounded_once[env_ids] = False
+    self.jump.reset(env_ids)
     self._command[env_ids] = 0.0
 
   def _refresh_commands(self, env_ids: torch.Tensor) -> None:
@@ -315,6 +372,8 @@ class SkillCommandTerm(CommandTerm):
       self._sample_walk_velocity(walk_ids)
     jump_ids = env_ids[self.skill_is("jump")[env_ids]]
     if len(jump_ids) > 0:
+      # Resampled only here (reset / skill change), matching the jump task.
+      self.jump.sample_twist(jump_ids)
       # The jump task's command block *is* the phase clock, so reproduce it here
       # rather than only in the skill block.
       phase = self.skill_phase()[jump_ids]
@@ -354,25 +413,18 @@ class SkillCommandTerm(CommandTerm):
     )
     self._maybe_switch_skill(ids)
 
-    # Jump phase clock and takeoff bookkeeping.
+    # Jump phase clock, twist and takeoff bookkeeping.
     jump_mask = self.skill_is("jump")
     jump_ids = ids[jump_mask[ids]]
     if len(jump_ids) > 0:
-      self.phase[jump_ids] = (
-        self.phase[jump_ids] + self._dt / self.cfg.jump_period_s
-      ) % 1.0
-      height = self.base_height()
-      airborne = self.airborne()
-      self.peak_height[jump_ids] = torch.maximum(
-        self.peak_height[jump_ids], height[jump_ids]
+      self.jump.update(
+        jump_ids,
+        dt=self._dt,
+        base_height=self.base_height(),
+        airborne=self.airborne(),
+        feet_contact=self.feet_contact(),
+        step_index=self._env.episode_length_buf,
       )
-      took_off = (
-        self.grounded_once[jump_ids]
-        & airborne[jump_ids]
-        & (height[jump_ids] > self.cfg.standing_height + self.cfg.takeoff_margin)
-      )
-      self.left_ground[jump_ids] |= took_off
-      self.grounded_once[jump_ids] |= ~airborne[jump_ids]
       phase = self.skill_phase()[jump_ids]
       self._command[jump_ids, 0] = phase[:, 0]
       self._command[jump_ids, 1] = phase[:, 1]
@@ -393,9 +445,13 @@ class SkillCommandTerm(CommandTerm):
       drive, sliders, get_env_idx = self._joystick
       index = get_env_idx()
       if bool(drive.value) and 0 <= index < self.num_envs:
-        if self.cfg.skill_names[int(self.skill[index])] in VELOCITY_SKILLS:
-          self._command[index, :3] = torch.tensor(
-            [float(slider.value) for slider in sliders],
-            dtype=self._command.dtype,
-            device=self.device,
-          )
+        skill = self.cfg.skill_names[int(self.skill[index])]
+        values = torch.tensor(
+          [float(slider.value) for slider in sliders],
+          dtype=self._command.dtype,
+          device=self.device,
+        )
+        if skill == "walk":
+          self._command[index, :3] = values
+        elif skill == "jump":
+          self.jump.twist[index] = values

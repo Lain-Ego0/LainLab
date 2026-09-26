@@ -26,6 +26,10 @@ OPENDOGE_JUMP_PROFILE = OPENDOGE_VELOCITY_PROFILES[0]
 JUMP_STANDING_HEIGHT = 0.151
 JUMP_TARGET_RISE = 0.05
 JUMP_PERIOD_S = 2.5
+# Horizontal twist the jump must carry through the air. Narrower than walking
+# (0.8 / 0.5 / 0.8): the robot is airborne for ~0.3 s and has little authority to
+# correct, so a hard command would only make the jump unreliable.
+JUMP_TWIST_RANGES = ((-0.3, 0.3), (-0.2, 0.2), (-0.4, 0.4))
 
 
 def register_jump_tasks() -> None:
@@ -36,5 +40,6 @@ def register_jump_tasks() -> None:
     standing_height=JUMP_STANDING_HEIGHT,
     target_rise=JUMP_TARGET_RISE,
     period_s=JUMP_PERIOD_S,
+    twist_ranges=JUMP_TWIST_RANGES,
     max_iterations=5_000,
   )
