@@ -4,7 +4,7 @@ Versioned, directly playable policy artifacts live here. Each entry has a
 `baseline.json` manifest plus the actual policy files:
 
 ```text
-baseline/<robot>/<terrain>/
+src/baseline/<robot>/<terrain>/
   baseline.json
   model.pt       # RSL-RL checkpoint for `uv run play --checkpoint-file`
   policy.onnx    # exported inference graph

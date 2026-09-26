@@ -29,6 +29,7 @@ from mjlab.utils.torch import configure_torch_backends
 from tensordict import TensorDict
 
 import src.tasks  # noqa: F401
+from src import PACKAGE_ROOT
 from src.tasks.multiskill.layout import (
   EXPERT_OBS_DIM,
   SKILL_ONE_HOT_SLICE,
@@ -65,10 +66,12 @@ class ExpertSource:
 
 SKILL_SOURCES: dict[str, ExpertSource] = {
   "walk": ExpertSource(
-    "LainLab-OpenDoge-Flat", Path("baseline/opendoge/flat/model.pt")
+    "LainLab-OpenDoge-Flat",
+    PACKAGE_ROOT / "baseline" / "opendoge" / "flat" / "model.pt",
   ),
   "getup": ExpertSource(
-    "LainLab-OpenDoge-Getup", Path("baseline/opendoge/getup/model.pt")
+    "LainLab-OpenDoge-Getup",
+    PACKAGE_ROOT / "baseline" / "opendoge" / "getup" / "model.pt",
   ),
   "handstand": ExpertSource("LainLab-OpenDoge-Handstand", None),
   "jump": ExpertSource("LainLab-OpenDoge-Jump", None),

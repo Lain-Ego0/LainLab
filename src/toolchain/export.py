@@ -9,7 +9,7 @@ Usage::
 
   uv run opendoge-export LainLab-OpenDoge-Skills-Flat \\
       --checkpoint logs/opendoge_skills_ft/.../model_3000.pt \\
-      --output baseline/opendoge/skills/policy.onnx
+      --output src/baseline/opendoge/skills/policy.onnx
 """
 
 from __future__ import annotations

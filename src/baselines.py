@@ -6,7 +6,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-BASELINE_ROOT = Path(__file__).resolve().parents[1] / "baseline"
+from src import PACKAGE_ROOT
+
+BASELINE_ROOT = PACKAGE_ROOT / "baseline"
 
 
 @dataclass(frozen=True)

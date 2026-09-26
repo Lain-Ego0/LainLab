@@ -40,7 +40,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, *extra: str) -> dict[str, Any]:
       "opendoge-eval",
       "LainLab-OpenDoge-Skills-Flat",
       "--checkpoint",
-      "baseline/opendoge/skills/model.pt",
+      "src/baseline/opendoge/skills/model.pt",
       *extra,
     ],
   )

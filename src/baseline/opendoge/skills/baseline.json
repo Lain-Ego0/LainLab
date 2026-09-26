@@ -29,8 +29,8 @@
     ]
   },
   "expert_selection": {
-    "walk": "baseline/opendoge/flat/model.pt",
-    "getup": "baseline/opendoge/getup/model.pt",
+    "walk": "src/baseline/opendoge/flat/model.pt",
+    "getup": "src/baseline/opendoge/getup/model.pt",
     "handstand": "logs/opendoge_handstand/lainlab_opendoge_handstand/2026-09-26_02-18-22/model_1100.pt",
     "jump": "logs/opendoge_jump_together/lainlab_opendoge_jump/2026-09-26_17-45-18/model_4999.pt",
     "criterion": "Kept the pair that measured best on handover. The jump expert is the retrained moving jump (5000 iterations, full budget: one target-height flight per cycle 1.00, four-feet contact agreement 0.98, takeoff stagger median 1 control step, velocity error 0.067 m/s), which is why this baseline differs from the previous in-place-jump one."

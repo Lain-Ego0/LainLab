@@ -14,9 +14,9 @@
 
 | 产物 | 路径 |
 |---|---|
-| 单策略（入库） | `baseline/opendoge/skills/model.pt` |
-| 单策略 ONNX | `baseline/opendoge/skills/policy.onnx`（777 KB） |
-| 清单 | `baseline/opendoge/skills/baseline.json` |
+| 单策略（入库） | `src/baseline/opendoge/skills/model.pt` |
+| 单策略 ONNX | `src/baseline/opendoge/skills/policy.onnx`（777 KB） |
+| 清单 | `src/baseline/opendoge/skills/baseline.json` |
 | 行为克隆学生（训练产物） | `logs/skills_data/student_comboA.pt`（seed 0）|
 | 专家数据 | `logs/skills_data/{walk,getup,handstand,jump}.pt` |
 
@@ -44,7 +44,7 @@ uv run baseline-play opendoge skills --num-envs 16
 
 ### 0.1 SOTA 登记（当前被挑战对象）
 
-`baseline/opendoge/skills/` **就是当前 SOTA**，`baseline.json` 里 `"status": "sota"`，
+`src/baseline/opendoge/skills/` **就是当前 SOTA**，`baseline.json` 里 `"status": "sota"`，
 任何人都以它为基准比较。清单同时固定了：
 
 - **产物哈希**（`sha256`，测试会校验）：`model.pt`
@@ -86,7 +86,7 @@ uv run baseline-play opendoge skills --num-envs 16
 "满预算倒立+跳跃专家"组合、recover-to-walk 专家（已撤回）、以及三种 per-skill
 架构变体（§5.8.3）。
 
-**上表是 2026-09-26 重新登记的版本**（`baseline/opendoge/skills/`，`model.pt`
+**上表是 2026-09-26 重新登记的版本**（`src/baseline/opendoge/skills/`，`model.pt`
 sha256 `18aaf997…426f506`）。它取代了旧的 54 维产物，后者在两次改动后**已经装不
 进当前环境**：
 
@@ -417,7 +417,7 @@ walk 的稳定性下降、切换变差。
    一部分。
 
 因此**交付物是行为克隆策略**（`logs/skills_data/student_comboA.pt`，已导出为
-`baseline/opendoge/skills/policy.onnx`）。这不是"没做完"——行为克隆已经达到并
+`src/baseline/opendoge/skills/policy.onnx`）。这不是"没做完"——行为克隆已经达到并
 超过每个单技能专家的水平（倒立 0.971 vs 专家 0.963，起身 0.961 vs 0.912，
 跳跃恢复 0.969 vs 0.970）。
 
@@ -457,14 +457,14 @@ actor。其余路径仍是框架标准训练流程。
 ### 5.5 交付数字的测量条件、方差与指标敏感性
 
 到此为止所有验收都是**干净观测 + 单次运行 + 自定窗口**。为把这三点补上，对入库的
-`baseline/opendoge/skills/model.pt` 做了三组测量。评估器会把测量条件写进每一份报告
+`src/baseline/opendoge/skills/model.pt` 做了三组测量。评估器会把测量条件写进每一份报告
 （`condition` 字段），所以任何一个数字都不会脱离它的条件被引用。
 
 #### 5.5.1 观测噪声（此前完全未验证）
 
 ```
 uv run opendoge-eval LainLab-OpenDoge-Skills-Flat \
-  --checkpoint baseline/opendoge/skills/model.pt --corruption        # 只加观测噪声
+  --checkpoint src/baseline/opendoge/skills/model.pt --corruption        # 只加观测噪声
   ... --train-config                                                 # 噪声 + 随机推力 + 回合重置
 ```
 
@@ -867,7 +867,7 @@ uv run opendoge-eval LainLab-OpenDoge-Jump --checkpoint <ckpt> --num-envs 64 --s
   （§5.6：只换走路数据，`jump→handstand` 从 0.969 掉到 0.370）。当前交付版是
   在这个约束下挑出来的最优组合，**不是架构上最优**；解法是 per-skill head。
 - **训练产物在 `logs/`（被 gitignore）**。本文记录的 checkpoint 路径是来源说明，
-  不是随仓库分发的资产；只有提升到 `baseline/` 的策略才会入库。
+  不是随仓库分发的资产；只有提升到 `src/baseline/` 的策略才会入库。
 
 ---
 

@@ -26,6 +26,8 @@
   回放命令区间改由各 profile 的 `play_command_ranges` 提供，`Unitree-*-Rough` 由
   mjlab 默认的 x(-1.0, 1.0) / y(-1.0, 1.0) / yaw(-0.5, 0.5) 变为
   x(-1.0, 1.5) / y(-0.5, 0.5) / yaw(-0.7, 0.7)（仅影响回放/评测，不影响训练）。
+- 版本化 baseline 由仓库根移入包内 `src/baseline/`，随 wheel 分发：`baseline-play`
+  以及 `opendoge-collect` 的专家来源不再依赖“当前工作目录是仓库根”这一假设。
 
 ### Added
 
@@ -33,7 +35,7 @@
 - 增加资产编译、任务注册和依赖版本兼容性测试。
 - 增加 OpenDoge（LainLab 自研四足）资产、Flat/Rough 速度任务，getup / handstand /
   jump 单技能任务，以及单策略多技能任务 `LainLab-OpenDoge-Skills-Flat`（57 维观测）。
-- 增加版本化 baseline（`baseline/<robot>/<terrain>/`）与 `baseline-play` 入口。
+- 增加版本化 baseline（`src/baseline/<robot>/<terrain>/`）与 `baseline-play` 入口。
 - 增加 OpenDoge 多技能工具链 `opendoge-calibrate` / `opendoge-eval` /
   `opendoge-collect` / `opendoge-bc` / `opendoge-dagger` / `opendoge-export`。
 
@@ -48,3 +50,6 @@
   `--train-config`，导致过渡指标在非声明条件下被测量的 bug。
 - 修正与实现不符的文档：`docs/opendoge_multiskill.md` 的观测维度（54 维 → 57 维）
   和 `src/tasks/multiskill/rl.py` 的默认架构描述（扁平共享输出层）。
+- 修正 README：目录树补齐 `tasks/{getup,handstand,jump,multiskill}`、`toolchain/`、
+  `workbench/`、`baseline/`、`viewer.py`、`docs/`、`playground/` 等实际目录，并移除
+  指向已删除 `deploy/`（含 `deploy/README.md` 死链）的错误部署说明。

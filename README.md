@@ -27,16 +27,26 @@ LainLab 将“接入一台机器人”组织为可复用的产品路径：资产
 
 ```text
 LainLab/
-├── src/
-│   ├── assets/          # 各机器人 MJCF、网格和示例动作
-│   ├── tasks/
+├── src/                 # 源码根（Python 包为 src.*）
+│   ├── assets/          # 各机器人 MJCF、URDF、网格与示例动作
+│   ├── tasks/           # 任务类型与机器人组成
 │   │   ├── velocity/    # 通用速度跟踪 MDP
 │   │   ├── tracking/    # 通用动作跟踪 MDP
+│   │   ├── getup/       # 起身任务类型
+│   │   ├── handstand/   # 倒立任务类型
+│   │   ├── jump/        # 跳跃任务类型
+│   │   ├── multiskill/  # 单策略多技能任务类型
 │   │   ├── amp/         # 预留通用 AMP core
 │   │   └── robots/      # 机器人组成、profile 与任务注册
-│   └── cli.py           # train / play / list-envs 入口
+│   ├── toolchain/       # 离线工具链：标定 / 采集 / BC / DAgger / 导出
+│   ├── workbench/       # 独立工作台（HTTP 服务与查看器）
+│   ├── baseline/        # 版本化基线策略（随包分发）
+│   ├── baselines.py     # 基线发现
+│   ├── cli.py           # train / play / list-envs 入口
+│   └── viewer.py        # Viser 回放扩展
 ├── tests/               # LainLab 自身的兼容性测试
-└── deploy/              # 实机部署源码（不提交模型和预编译运行库）
+├── docs/                # 设计、验收与工作台文档
+└── playground/          # 浏览器策略试玩前端
 ```
 
 分层原则：
@@ -92,6 +102,11 @@ uv run play LainLab-OpenDoge-Flat --checkpoint-file logs/.../model_1000.pt
 uv run csv-to-npz --input-file src/assets/motions/g1/dance1_subject2.csv \
   --output-name dance1-subject2 --robot g1
 ```
+
+> **续训提示**：Unitree 速度任务的实验名已由 `<robot>_velocity` 改为
+> `<task_group>_<robot>_<terrain>_velocity`（Flat 与 Rough 不再共用同一目录）。
+> 续训改名前的实验需显式指定旧目录名，例如：
+> `uv run train Unitree-Go2-Flat --agent.resume --agent.load-run go2_velocity`。
 
 ### 独立工作台
 
@@ -151,7 +166,7 @@ make check
 
 ## 部署
 
-`deploy/` 保留参考项目中的源码，但不再内置 ONNX Runtime、MuJoCo 二进制或训练好的策略。请按 [deploy/README.md](deploy/README.md) 配置系统依赖并把导出的策略放到对应机器人目录。
+仓库当前不包含实机部署源码：`deploy/` 已移除，`simulate/`（Unitree MuJoCo / SDK2 仿真桥）也已删除。训练与验证仍可使用 `play` 的 Viser 回放，导出的 ONNX 策略可交给外部实机部署工程；重新引入部署适配时，按“资产 → profile/任务 → 验证 → 部署适配”的路径补回。
 
 ## 上游与许可
 
@@ -188,16 +203,26 @@ LainLab turns robot onboarding into a repeatable product path: assets have clear
 
 ```text
 LainLab/
-├── src/
-│   ├── assets/          # Per-robot MJCF files, meshes, and example motions
-│   ├── tasks/
+├── src/                 # Source root (Python package: src.*)
+│   ├── assets/          # Per-robot MJCF/URDF files, meshes, example motions
+│   ├── tasks/           # Task types and robot composition
 │   │   ├── velocity/    # Shared velocity-tracking MDP
 │   │   ├── tracking/    # Shared motion-tracking MDP
+│   │   ├── getup/       # Get-up task type
+│   │   ├── handstand/   # Handstand task type
+│   │   ├── jump/        # Jump task type
+│   │   ├── multiskill/  # Single-policy multi-skill task type
 │   │   ├── amp/         # Reserved generic AMP core
-│   │   └── robots/      # Robot composition, profiles, and registration
-│   └── cli.py           # train / play / list-envs entry points
+│   │   └── robots/      # Robot composition, profiles, registration
+│   ├── toolchain/       # Offline toolchain: calibrate / collect / BC / DAgger / export
+│   ├── workbench/       # Standalone workbench (HTTP server + viewer)
+│   ├── baseline/        # Versioned baseline policies (shipped in the wheel)
+│   ├── baselines.py     # Baseline discovery
+│   ├── cli.py           # train / play / list-envs entry points
+│   └── viewer.py        # Viser playback extensions
 ├── tests/               # LainLab compatibility tests
-└── deploy/              # Real-robot deployment source (no models or bundled runtimes)
+├── docs/                # Design, acceptance, and workbench docs
+└── playground/          # Browser policy playground
 ```
 
 Layering principles:
@@ -254,6 +279,12 @@ uv run csv-to-npz --input-file src/assets/motions/g1/dance1_subject2.csv \
   --output-name dance1-subject2 --robot g1
 ```
 
+> **Resuming runs**: Unitree velocity experiment names changed from
+> `<robot>_velocity` to `<task_group>_<robot>_<terrain>_velocity` (Flat and Rough
+> no longer share a directory). To resume a pre-rename run, point at its old
+> experiment directory explicitly, e.g.
+> `uv run train Unitree-Go2-Flat --agent.resume --agent.load-run go2_velocity`.
+
 `csv-to-npz` creates an NPZ locally and does not require Weights & Biases. If `--output-name` is only a filename, the output is written next to the input CSV; an absolute or relative output path may also be used. Use `--robot g1_23dof` for G1-23DoF motions.
 
 Tasks use a category prefix, for example `Unitree-<Robot>-Flat` / `Unitree-<Robot>-Rough` and `LainLab-<Robot>-Flat` / `LainLab-<Robot>-Rough`. OpenDoge is an in-house robot and belongs to `LainLab`; Flat, Rough, Getup, Handstand, and Jump variants are registered, plus `LainLab-OpenDoge-Skills-Flat`, which folds the first four skills into a single policy. Velocity tasks support A2, As2, Go2, OpenDoge, G1, G1-23Dof, H1_2, H2, and R1. Motion tracking tasks support G1 and G1-23Dof. The current flat-ground fall-recovery task is `LainLab-OpenDoge-Getup`. The full single-policy multi-skill design and acceptance record is in [docs/opendoge_multiskill.md](docs/opendoge_multiskill.md).
@@ -277,7 +308,7 @@ Robot differences are centralized under `src/tasks/robots/`. Shared MDPs live in
 
 ## Deployment
 
-`deploy/` retains source from the reference projects but does not bundle ONNX Runtime, MuJoCo binaries, or trained policies. Follow [deploy/README.md](deploy/README.md) to configure system dependencies, then place exported policies in the corresponding robot directory.
+The repository does not currently ship real-robot deployment code: `deploy/` has been removed and `simulate/` (the Unitree MuJoCo / SDK2 bridge) was deleted as well. Training and validation still work through the `play` Viser viewer, and an exported ONNX policy can be handed to an external deployment project; when deployment adapters are reintroduced, follow the same asset → profile/task → validation → deployment adapter path.
 
 ## Upstream and license
 

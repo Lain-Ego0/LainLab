@@ -41,6 +41,6 @@ Makefile.user
 .src-workbench/
 node_modules/
 
-# Versioned baseline policies
-!baseline/
-!baseline/**
+# Versioned baseline policies ship inside the package so wheels include them.
+!src/baseline/
+!src/baseline/**
