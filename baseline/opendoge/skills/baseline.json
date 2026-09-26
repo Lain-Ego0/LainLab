@@ -2,17 +2,62 @@
   "robot": "opendoge",
   "terrain": "skills",
   "task_id": "LainLab-OpenDoge-Skills-Flat",
+  "status": "sota",
   "method": "Behaviour cloning from four single-skill experts",
   "iterations": null,
   "checkpoint": "model.pt",
   "onnx": "policy.onnx",
+  "sha256": {
+    "model.pt": "d3922fb5e032eb083089e411e513ba34c90885b40d6eb4dc2c2cd1ff4d6b7aa8",
+    "policy.onnx": "f0bb0764f75beec93c4efe08f65aa54d63b12cf4ae927851415e81b9baaad504"
+  },
   "source_checkpoint": "logs/skills_data/student_comboA.pt",
   "expert_selection": {
     "walk": "baseline/opendoge/flat/model.pt",
     "getup": "baseline/opendoge/getup/model.pt",
     "handstand": "logs/opendoge_handstand/lainlab_opendoge_handstand/2026-09-26_02-18-22/model_1100.pt",
     "jump": "logs/opendoge_jump_full/lainlab_opendoge_jump/2026-09-26_04-09-53/model_3999.pt",
-    "criterion": "Chosen by transition score, not by single-skill score. The full-budget handstand expert (5000 iterations) has identical solo metrics to the early one (1222 iterations) but its clone collapsed on jump->handstand (0.359 vs 0.953). The full-budget jump expert IS better solo (recovery 0.932 -> 0.970) and was kept. The shipped pair gives both: handstand transitions 0.953-1.000 from every source and jump recovery 0.969."
+    "criterion": "Chosen by transition score, not by single-skill score. The full-budget handstand expert (5000 iterations) has identical solo metrics to the early one (1222 iterations) but its clone collapsed on jump->handstand (0.359 vs 0.953). The full-budget jump expert IS better solo (recovery 0.932 -> 0.970) and was kept, so the shipped pair gets both."
   },
-  "selection": "Single policy covering walk / handstand / getup / jump with a 54-field observation (48 shared proprioceptive fields + one-hot skill + phase). Per-skill: walk 1.000 standing with 0.063 m/s tracking error, handstand 0.971, getup 0.961, jump 0.074 m peak rise with 0.969 recovery. Mean off-diagonal transition success 0.943, up from 0.929 (early experts only) and 0.873 (full-budget handstand expert). Two PPO fine-tunes (LR 3e-4 x 1900 and LR 5e-5 x 900) were measured and rejected: 0.916 and 0.865 on transitions. See docs/opendoge_multiskill.md."
+
+  "reference_protocol": {
+    "note": "The transition metric is window-dependent (the aggregate spans roughly 0.82-0.95 across window settings), so it only means anything together with this exact protocol. Compare challengers on these commands and nothing else.",
+    "per_skill": "uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --num-envs 64 --steps 1000 --seed 0",
+    "transitions": "uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --num-envs 64 --seed 0 --transitions --hold-steps 250 --settle-steps 250 --measure-steps 200",
+    "condition": "play-config (clean observations)"
+  },
+  "reference_metrics": {
+    "per_skill": {
+      "walk_standing_and_stepping": 1.0,
+      "walk_velocity_error": 0.051,
+      "handstand_hold": 0.972,
+      "getup_standing": 0.958,
+      "jump_peak_rise_m": 0.073,
+      "jump_recovery": 0.967
+    },
+    "transitions": {
+      "mean_off_diagonal": 0.928,
+      "handstand_to_walk": 0.628,
+      "per_seed_aggregate": { "0": 0.928, "1": 0.943, "2": 0.941 }
+    },
+    "robustness": {
+      "observation_noise_per_skill": "walk 1.000 / 0.066, handstand 0.951, getup 0.935, jump 0.074 / 0.980",
+      "observation_noise_transitions": "0.937 +/- 0.003 over 3 seeds",
+      "train_config_transitions": 0.942,
+      "note": "measured with the shorter P0 protocol; see docs/opendoge_multiskill.md section 5.5"
+    }
+  },
+  "sota_adoption_rule": [
+    "Run the reference protocol with seeds 0, 1 and 2.",
+    "Reject if any per-skill metric is worse than the reference by more than the measured seed spread: walk velocity error > 0.06, handstand < 0.95, getup < 0.93, jump recovery < 0.96, jump peak outside 0.070-0.080 m.",
+    "Replace only if it also improves the transition aggregate to >= 0.95, or lifts handstand->walk to >= 0.75 while holding the aggregate >= 0.928.",
+    "A better single-seed aggregate is not sufficient on its own: the seed spread alone is 0.928-0.943."
+  ],
+  "rejected": {
+    "PPO fine-tune LR 3e-4": "1900 iterations; transitions 0.916, walk stability 1.000 -> 0.931",
+    "PPO fine-tune LR 5e-5": "900 iterations; transitions 0.865, walk velocity error 0.054 -> 0.296, handstand -11 points",
+    "full-budget experts for handstand and jump": "transitions 0.873, jump->handstand collapsed to 0.359",
+    "recover-to-walk expert (withdrawn)": "transitions 0.846, handstand->walk 0.760 -> 0.327, jump->handstand 0.969 -> 0.370. Root cause: shared-trunk interference."
+  },
+  "selection": "Single policy covering walk / handstand / getup / jump with a 54-field observation (48 shared proprioceptive fields + one-hot skill + phase). Adopted as SOTA on the reference protocol above; observation-noise robustness, the full training condition and evaluation-seed variance were all measured before adoption (docs/opendoge_multiskill.md sections 5.5 and 5.6)."
 }
