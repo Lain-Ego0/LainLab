@@ -12,7 +12,7 @@ All targets come from the per-skill tasks, which take them from
 - jump apex 0.05 m above standing on a 2.5 s phase clock
 """
 
-from src.tasks.skills import register_skills_profile
+from src.tasks.multiskill import register_skills_profile
 
 from .handstand import HANDSTAND_BASE_HEIGHT_TARGET, HANDSTAND_REAR_CLEARANCE_TARGET
 from .jump import JUMP_PERIOD_S, JUMP_STANDING_HEIGHT, JUMP_TARGET_RISE

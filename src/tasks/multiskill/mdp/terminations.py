@@ -16,7 +16,7 @@ import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.velocity.mdp.terminations import illegal_contact
 
-from src.tasks.skills.mdp.utils import skill_mask
+from src.tasks.multiskill.mdp.utils import skill_mask
 
 
 def contact_termination(

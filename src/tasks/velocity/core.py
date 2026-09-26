@@ -605,6 +605,14 @@ def _apply_rough_terrain_overrides(
     if overrides.promotion_distance_scale is not None:
       term.params["promotion_distance_scale"] = overrides.promotion_distance_scale
 
+  if overrides.sub_terrains:
+    # ``make_velocity_env_cfg`` builds its generator with a shallow
+    # ``replace(ROUGH_TERRAINS_CFG)``, so the sub-terrain dict is the *same*
+    # object as mjlab's module-level default and is shared by every rough task
+    # built in this process. Patch a private copy, or one robot's overrides leak
+    # into all the others (including already-built configs).
+    generator.sub_terrains = dict(generator.sub_terrains)
+
   for name, patch in overrides.sub_terrains.items():
     if name not in generator.sub_terrains:
       raise ValueError(f"Unknown sub-terrain override {name!r}")

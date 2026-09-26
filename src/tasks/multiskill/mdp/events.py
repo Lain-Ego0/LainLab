@@ -29,7 +29,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.utils.lab_api.math import sample_uniform
 
 from src.tasks.getup.mdp.events import reset_fallen_joints, reset_fallen_root
-from src.tasks.skills.mdp.utils import skill_term
+from src.tasks.multiskill.mdp.utils import skill_term
 
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 _VELOCITY_AXES = ("x", "y", "z", "roll", "pitch", "yaw")

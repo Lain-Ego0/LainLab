@@ -15,7 +15,6 @@ from pathlib import Path
 
 import torch
 
-
 POLICIES = {
     "go2-rear-stand.onnx": ("go2_handstand/exported/policies/policy_1.pt", 45),
     "go2-trot.onnx": ("go2_trot/exported/policies/policy_trot.pt", 470),

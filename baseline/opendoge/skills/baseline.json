@@ -16,7 +16,7 @@
     "actor_dim": 57,
     "critic_dim": 81,
     "layout": "[shared 48 proprioception+command][jump twist 3][skill 6 = one_hot(4) + phase sin/cos]",
-    "single_source": "src/tasks/skills/layout.py",
+    "single_source": "src/tasks/multiskill/layout.py",
     "invariant": "each expert's native observation is a prefix of this layout, so experts are driven by slicing and no adapter can drift; pinned by tests/test_opendoge_skills.py",
     "expert_prefix_widths": {"walk": 48, "getup": 48, "handstand": 48, "jump": 51}
   },
@@ -24,8 +24,8 @@
     "actor": "rsl_rl MLPModel, 512-256-128 ELU, empirical observation normalization, Gaussian with scalar std",
     "why_flat": "Per-skill output heads and a zero-initialised per-skill residual were both implemented and measured; both are worse on handover (see rejected), so the flat shared output layer ships.",
     "implemented_but_not_shipped": [
-      "src/tasks/skills/rl.py: SkillHeadedActor (one independent head per skill)",
-      "src/tasks/skills/rl.py: SharedResidualActor (shared head + zero-init per-skill residual)"
+      "src/tasks/multiskill/rl.py: SkillHeadedActor (one independent head per skill)",
+      "src/tasks/multiskill/rl.py: SharedResidualActor (shared head + zero-init per-skill residual)"
     ]
   },
   "expert_selection": {

@@ -9,7 +9,7 @@ from typing import Any
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 
-from src.tasks.skills.mdp.command import SkillCommandTerm
+from src.tasks.multiskill.mdp.command import SkillCommandTerm
 
 DEFAULT_COMMAND_NAME = "skill"
 COMMAND_PARAM_KEYS = ("command_name",)

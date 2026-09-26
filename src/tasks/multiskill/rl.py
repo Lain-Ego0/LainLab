@@ -12,10 +12,10 @@ can represent them without sacrificing one for another, and the measurements
   `handstand->walk` to 0.491. Adding handover samples recovered only part of it
   (0.9301 / 0.552).
 
-So the default is a shared head *plus* a per-skill residual whose weights start
-at zero: at initialisation the network *is* the flat policy, so it cannot be
-worse than it on handover, and per-skill capacity is added only where the data
-supports specialisation.
+So the shipped default is the flat shared output layer (``MLPModel``): it is the
+best-measured variant on handover. The per-skill head and the zero-initialised
+per-skill residual below are kept as measured-but-rejected alternatives, not as
+the default (docs section 5.8.3).
 
 The runner is unchanged in what it optimises; it exists because a
 behaviour-cloning artifact contains only the actor, while the stock training path
@@ -32,7 +32,7 @@ from rsl_rl.modules import MLP, HiddenState
 from rsl_rl.utils import unpad_trajectories
 from tensordict import TensorDict
 
-from src.tasks.skills.layout import SKILL_NAMES, SKILL_ONE_HOT_SLICE
+from src.tasks.multiskill.layout import SKILL_NAMES, SKILL_ONE_HOT_SLICE
 
 
 class SkillOnPolicyRunner(MjlabOnPolicyRunner):
@@ -155,9 +155,7 @@ class SkillHeadedActor(SkillConditionedActor):
   """
 
   def build_heads(self) -> None:
-    heads = [
-      nn.Linear(self.trunk_dim, self.output_dim) for _ in range(self.num_skills)
-    ]
+    heads = [nn.Linear(self.trunk_dim, self.output_dim) for _ in range(self.num_skills)]
     self.heads = nn.ModuleList(heads)
     for head in heads:
       nn.init.orthogonal_(head.weight, gain=1.0)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 
-from src.tasks.skills.mdp.utils import skill_term
+from src.tasks.multiskill.mdp.utils import skill_term
 
 
 def skill_switch_probability(

@@ -1,7 +1,7 @@
 # OpenDoge 单策略多技能（walk / handstand / getup / jump）
 
 单策略、单网络、同一台 OpenDoge 上的四个技能。任务 `LainLab-OpenDoge-Skills-Flat`，
-观测 54 维（48 维共享本体感知 + one-hot skill + 相位），动作 12 维。
+观测 57 维（48 维共享本体感知 + 3 维 jump twist + 4 维 one-hot skill + 2 维相位），动作 12 维。
 
 本文只记录**可测量的验收结论**：每条结论都给出复现命令和数值。奖励曲线不作为
 验收证据——策略可以在做不出任何可识别动作的情况下刷高塑形奖励（跳跃任务第一版
@@ -275,7 +275,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/test_opendoge_skills.py -q
 ### 5.1 数据与行为克隆
 
 每个技能 1,024,000 条转移（2048 环境 × 500 步），在**统一环境**中采集，因此
-观测已是学生的 54 维布局；专家由其原生 48 维观测切片驱动。
+观测已是学生的 57 维布局；专家由其原生观测切片驱动（walk/getup/handstand 48 维，jump 51 维）。
 
 ```
 uv run opendoge-collect --skill walk                     # 同理 getup/handstand/jump
@@ -372,7 +372,7 @@ walk/getup 固定用入库 baseline，倒立与跳跃各有两个候选，实测
 起立"这个**复合**行为，而没有任何单个专家负责它。要做对，需要要么给这个复合
 行为单独训一个专家，要么改用能覆盖转移的 RL 目标（per-skill 价值头 + 切换课程），
 而不是继续在单技能专家上做监督标注。工具与负结果都保留在
-`src/skills/dagger.py` 里以便复核。
+`src/toolchain/dagger.py` 里以便复核。
 
 ### 5.4 PPO 微调：结论是**不采用**
 行为克隆产物只有 actor（critic 重拟合很便宜、优化器状态跨克隆无意义），而框架
@@ -886,7 +886,7 @@ uv run opendoge-eval LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --transiti
 uv run opendoge-export LainLab-OpenDoge-Skills-Flat --checkpoint <ckpt> --output <onnx>
 ```
 
-采集时**每个技能切不同的观测前缀**（`src/skills/collect.py` 的 `EXPERT_OBS_DIM`）：
+采集时**每个技能切不同的观测前缀**（`src/toolchain/collect.py` 的 `EXPERT_OBS_DIM`）：
 walk/getup/handstand 是前 48 维，jump 是前 51 维（多一个 3 维 twist 块）。切片写错
 不会报错，只会静默产出错误标签，因此采集结束时会校验实际宽度，并有
 `test_expert_observation_widths_match_the_unified_layout` 钉住这个不变量。

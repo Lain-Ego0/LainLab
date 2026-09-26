@@ -3,7 +3,7 @@
 from dataclasses import fields, replace
 
 import src.tasks  # noqa: F401
-from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
+from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from src.tasks.robots.opendoge.velocity import OPENDOGE_VELOCITY_PROFILES
 from src.tasks.velocity import (
@@ -101,3 +101,74 @@ def test_rough_overrides_do_not_touch_env_behavior_config() -> None:
   assert control.scene.terrain.terrain_generator is not None
   assert configured.scene.terrain.terrain_generator.size == (6.0, 6.0)
   assert control.scene.terrain.terrain_generator.size != (6.0, 6.0)
+
+
+# ``mjlab==1.6.0`` is pinned, so these are the stable reference values of
+# ``mjlab.terrains.config.ROUGH_TERRAINS_CFG`` before any LainLab override.
+_MJLAB_ROUGH_STEP_WIDTH = 0.3
+_MJLAB_ROUGH_SCALE_WITH_DIFFICULTY = False
+
+
+def _rough_sub_terrains(task_id: str):
+  cfg = load_env_cfg(task_id)
+  terrain = cfg.scene.terrain
+  assert terrain is not None
+  assert terrain.terrain_generator is not None
+  return terrain.terrain_generator.sub_terrains
+
+
+def test_opendoge_rough_overrides_do_not_leak_into_other_robots() -> None:
+  """OpenDoge's terrain overrides must stay inside its own task.
+
+  ``make_velocity_env_cfg`` shallow-copies mjlab's module-level generator, so the
+  sub-terrain dict is shared with every other rough config unless the builder
+  copies it before patching. A regression here silently re-tunes the terrain of
+  every pre-existing rough task, which no per-robot config test would notice.
+  """
+  from mjlab.terrains.config import ROUGH_TERRAINS_CFG
+
+  unitree = _rough_sub_terrains("Unitree-Go2-Rough")
+  opendoge = _rough_sub_terrains("LainLab-OpenDoge-Rough")
+
+  assert unitree is not ROUGH_TERRAINS_CFG.sub_terrains
+  assert opendoge is not ROUGH_TERRAINS_CFG.sub_terrains
+  assert unitree is not opendoge
+
+  assert unitree["pyramid_stairs"].step_width == _MJLAB_ROUGH_STEP_WIDTH
+  assert unitree["pyramid_stairs_inv"].step_width == _MJLAB_ROUGH_STEP_WIDTH
+  assert (
+    unitree["random_rough"].scale_with_difficulty is _MJLAB_ROUGH_SCALE_WITH_DIFFICULTY
+  )
+
+  assert opendoge["pyramid_stairs"].step_width == 0.22
+  assert opendoge["pyramid_stairs_inv"].step_width == 0.22
+  assert opendoge["random_rough"].scale_with_difficulty is True
+
+
+def test_no_other_rough_task_inherits_opendoge_terrain() -> None:
+  """Every non-OpenDoge rough task keeps mjlab's untouched terrain defaults.
+
+  Covers the Unitree robots, the Go2 skill tasks and mjlab's own built-in
+  velocity tasks, because they all share the same module-level generator dict.
+  """
+  covered = 0
+  for task_id in sorted(list_tasks()):
+    if "Rough" not in task_id or task_id.startswith("LainLab-OpenDoge"):
+      continue
+    sub = _rough_sub_terrains(task_id)
+    assert sub["pyramid_stairs"].step_width == _MJLAB_ROUGH_STEP_WIDTH, task_id
+    assert (
+      sub["random_rough"].scale_with_difficulty is _MJLAB_ROUGH_SCALE_WITH_DIFFICULTY
+    ), task_id
+    covered += 1
+  assert covered >= 11
+
+
+def test_registration_leaves_mjlab_terrain_default_untouched() -> None:
+  from mjlab.terrains.config import ROUGH_TERRAINS_CFG
+
+  default = ROUGH_TERRAINS_CFG.sub_terrains
+  assert default["pyramid_stairs"].step_width == _MJLAB_ROUGH_STEP_WIDTH
+  assert (
+    default["random_rough"].scale_with_difficulty is _MJLAB_ROUGH_SCALE_WITH_DIFFICULTY
+  )

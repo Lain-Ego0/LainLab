@@ -34,15 +34,15 @@ from mjlab.utils.torch import configure_torch_backends
 from tensordict import TensorDict
 
 import src.tasks  # noqa: F401
-from src.skills.bc import ACTION_DIM, OBS_DIM, build_student, train
-from src.skills.collect import (
+from src.tasks.multiskill.mdp.command import SkillCommandTerm
+from src.toolchain.bc import ACTION_DIM, OBS_DIM, build_student, train
+from src.toolchain.collect import (
   EXPERT_OBS_DIM,
   SKILL_SOURCES,
   SKILLS_TASK_ID,
   SkillDataset,
   load_expert_policy,
 )
-from src.tasks.skills.mdp.command import SkillCommandTerm
 
 
 @dataclass(frozen=True)

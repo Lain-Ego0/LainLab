@@ -12,13 +12,13 @@ import src.tasks  # noqa: F401
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
-from src.tasks.skills.layout import (
+from src.tasks.multiskill.layout import (
   EXPERT_OBS_DIM,
   SHARED_OBS_DIM,
   SKILL_ONE_HOT_SLICE,
   STUDENT_OBS_DIM,
 )
-from src.tasks.skills.mdp.command import (
+from src.tasks.multiskill.mdp.command import (
   SKILL_NAMES,
   SkillCommandCfg,
   SkillCommandTerm,
@@ -318,7 +318,7 @@ def test_bc_artifact_loads_into_the_policy_the_evaluator_builds() -> None:
 
   from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
   from mjlab.tasks.registry import load_rl_cfg, load_runner_cls
-  from src.skills.bc import build_student
+  from src.toolchain.bc import build_student
 
   env = _build(2)
   try:
@@ -363,7 +363,7 @@ def test_skill_residuals_start_as_a_no_op() -> None:
   any specialisation from data. A non-zero residual init would silently give
   that up while still passing every other test.
   """
-  from src.tasks.skills.rl import SharedResidualActor
+  from src.tasks.multiskill.rl import SharedResidualActor
 
   student = _experimental_actor(SharedResidualActor)
   state = student.state_dict()
@@ -409,7 +409,7 @@ def test_skill_residuals_start_as_a_no_op() -> None:
 
 def _experimental_actor(actor_class):
   """Build one of the non-default architectures with the student's settings."""
-  from src.skills.bc import ACTION_DIM, HIDDEN_DIMS, OBS_DIM
+  from src.toolchain.bc import ACTION_DIM, HIDDEN_DIMS, OBS_DIM
   from tensordict import TensorDict
 
   return actor_class(

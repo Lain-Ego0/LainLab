@@ -29,7 +29,7 @@ from mjlab.utils.torch import configure_torch_backends
 
 import src.tasks  # noqa: F401
 from src.tasks.jump.mdp.command import JumpCommand
-from src.tasks.skills.mdp.command import SKILL_NAMES, SkillCommandTerm
+from src.tasks.multiskill.mdp.command import SKILL_NAMES, SkillCommandTerm
 
 STANDING_HEIGHT = 0.151
 HANDSTAND_HEIGHT = 0.220
@@ -664,6 +664,9 @@ def main() -> None:
       measure_steps=args.measure_steps,
       device=args.device,
       pairs=(_parse_pairs(args.pairs, list(SKILL_NAMES)) if args.pairs else None),
+      corruption=args.corruption,
+      train_config=args.train_config,
+      seed=args.seed,
     )
   else:
     report = evaluate(

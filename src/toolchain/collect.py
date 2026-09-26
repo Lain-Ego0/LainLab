@@ -29,12 +29,12 @@ from mjlab.utils.torch import configure_torch_backends
 from tensordict import TensorDict
 
 import src.tasks  # noqa: F401
-from src.tasks.skills.layout import (
+from src.tasks.multiskill.layout import (
   EXPERT_OBS_DIM,
   SKILL_ONE_HOT_SLICE,
   STUDENT_OBS_DIM,
 )
-from src.tasks.skills.mdp.command import SKILL_NAMES, SkillCommandTerm
+from src.tasks.multiskill.mdp.command import SKILL_NAMES, SkillCommandTerm
 
 SKILLS_TASK_ID = "LainLab-OpenDoge-Skills-Flat"
 DATA_ROOT = Path("logs/skills_data")

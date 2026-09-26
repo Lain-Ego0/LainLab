@@ -18,7 +18,7 @@ Layout::
 
 from __future__ import annotations
 
-from src.tasks.skills.mdp.command import SKILL_NAMES
+from src.tasks.multiskill.mdp.command import SKILL_NAMES
 
 SHARED_OBS_DIM = 48
 """Proprioception plus the command block: the walk/get-up/handstand observation."""

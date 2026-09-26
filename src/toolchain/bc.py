@@ -28,9 +28,9 @@ import torch.nn.functional as F
 from rsl_rl.utils import resolve_callable
 from tensordict import TensorDict
 
-from src.skills.collect import SKILLS_TASK_ID, SkillDataset
-from src.tasks.skills.layout import STUDENT_OBS_DIM
-from src.tasks.skills.rl import SkillConditionedActor
+from src.tasks.multiskill.layout import STUDENT_OBS_DIM
+from src.tasks.multiskill.rl import SkillConditionedActor
+from src.toolchain.collect import SKILLS_TASK_ID, SkillDataset
 
 OBS_DIM = STUDENT_OBS_DIM
 ACTION_DIM = 12

@@ -35,14 +35,14 @@ from src.tasks.getup import make_getup_env_cfg
 from src.tasks.handstand import make_handstand_env_cfg
 from src.tasks.jump import make_jump_env_cfg
 from src.tasks.jump.mdp import command as jump_command
+from src.tasks.multiskill.mdp import curriculums as skills_curriculums
+from src.tasks.multiskill.mdp import events as skills_events
+from src.tasks.multiskill.mdp import terminations as skills_terminations
+from src.tasks.multiskill.mdp import utils as skills_utils
+from src.tasks.multiskill.mdp.command import SKILL_NAMES, SkillCommandCfg
+from src.tasks.multiskill.mdp.events import StandingReset
+from src.tasks.multiskill.rl import SkillOnPolicyRunner
 from src.tasks.rl import make_ppo_runner_cfg
-from src.tasks.skills.mdp import curriculums as skills_curriculums
-from src.tasks.skills.mdp import events as skills_events
-from src.tasks.skills.mdp import terminations as skills_terminations
-from src.tasks.skills.mdp import utils as skills_utils
-from src.tasks.skills.mdp.command import SKILL_NAMES, SkillCommandCfg
-from src.tasks.skills.mdp.events import StandingReset
-from src.tasks.skills.rl import SkillOnPolicyRunner
 from src.tasks.velocity.core import VelocityRobotProfile, _make_base_env_cfg
 
 SKILL_COMMAND_NAME = "skill"

@@ -6,9 +6,10 @@ lives under ``tasks.robots``.
 """
 
 from . import amp as amp
+from . import getup as getup
 from . import handstand as handstand
 from . import jump as jump
-from . import skills as skills
+from . import multiskill as multiskill
 from . import tracking as tracking
 from . import velocity as velocity
 from .robots import g1 as g1
