@@ -27,21 +27,12 @@ library into `public/robot/`. Policy ONNX files are versioned in
 - DreamWaQ terrain gait (270-D / 6-frame history)
 - AMP-CTS gait (270-D / 6-frame history)
 
-The handstand artifact is LainLab's own exported policy from
-`logs/rsl_rl/go2_handstand/`, while the other artifacts are converted from the
-corresponding TorchScript policies in
-`/home/lxy/下载/My_unitree_go2_gym-main`. They are never fetched by the
-browser. To intentionally refresh them on a development machine that has
-PyTorch and ONNX installed:
-
-```bash
-/home/lxy/miniconda3/envs/mjlab/bin/python scripts/export_policies.py \
-  --source /home/lxy/下载/My_unitree_go2_gym-main
-```
-
-The script copies the selected LainLab handstand export and converts the six
-remaining Gym models whose input/output contracts are implemented by this
-browser demo. It does not run as part of the normal build.
+The handstand artifact is LainLab's own exported policy (from a
+`logs/rsl_rl/go2_handstand/` run); the others were converted once from the
+corresponding TorchScript policies in the external `My_unitree_go2_gym-main`
+reference project. The browser only ever loads the checked-in `.onnx` files:
+there is no export step in the build, and refreshing them is an offline
+operation on a machine that has those sources, PyTorch and ONNX installed.
 
 ## Terrain editor
 
