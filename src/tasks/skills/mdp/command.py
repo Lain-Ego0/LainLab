@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from mjlab.entity import Entity
@@ -33,6 +33,8 @@ if TYPE_CHECKING:
   import viser
 
 SKILL_NAMES = ("walk", "handstand", "getup", "jump")
+VELOCITY_SKILLS = ("walk",)
+"""Skills whose command block is a velocity twist; driveable from the viewer."""
 
 
 @dataclass(kw_only=True)
@@ -97,6 +99,9 @@ class SkillCommandTerm(CommandTerm):
     self._skill_override = torch.full(
       (self.num_envs,), -1, dtype=torch.long, device=self.device
     )
+    # Viewer-only joystick: (enable_checkbox, sliders, get_env_idx). Populated by
+    # create_gui, None everywhere else, so training never reads it.
+    self._joystick: tuple[Any, list[Any], Callable[[], int]] | None = None
 
   # -- public helpers -------------------------------------------------------
 
@@ -203,6 +208,35 @@ class SkillCommandTerm(CommandTerm):
         self.set_skill_override(None)
         if on_change is not None:
           on_change()
+
+    # Velocity joystick for the skills whose command block is a twist. Without
+    # it the walk velocity is only ever sampled internally, so the viewer has no
+    # way to drive the robot by hand.
+    lin_x, lin_y, ang_z = self.cfg.walk_command_ranges
+    with server.gui.add_folder(f"{name} velocity"):
+      drive = server.gui.add_checkbox("Drive selected env", initial_value=False)
+      sliders = [
+        server.gui.add_slider(
+          label,
+          min=min(0.0, low),
+          max=max(0.0, high),
+          step=0.05,
+          initial_value=0.0,
+        )
+        for label, (low, high) in (
+          ("vx", lin_x),
+          ("vy", lin_y),
+          ("vw", ang_z),
+        )
+      ]
+      zero_btn = server.gui.add_button("Zero", icon=Icon.SQUARE_X)
+
+      @zero_btn.on_click
+      def _(_) -> None:
+        for slider in sliders:
+          slider.value = 0.0
+
+    self._joystick = (drive, sliders, get_env_idx)
 
   def set_switch_prob(self, value: float) -> None:
     self.cfg.switch_prob = float(value)
@@ -351,3 +385,17 @@ class SkillCommandTerm(CommandTerm):
       due = walk_ids[self._walk_time_left[walk_ids] <= 0.0]
       if len(due) > 0:
         self._sample_walk_velocity(due)
+
+    # The joystick writes last so it wins over both the sampled command and the
+    # resampling timer; it only applies to the selected environment, and only
+    # when that environment runs a skill whose command block is a twist.
+    if env_ids is None and self._joystick is not None:
+      drive, sliders, get_env_idx = self._joystick
+      index = get_env_idx()
+      if bool(drive.value) and 0 <= index < self.num_envs:
+        if self.cfg.skill_names[int(self.skill[index])] in VELOCITY_SKILLS:
+          self._command[index, :3] = torch.tensor(
+            [float(slider.value) for slider in sliders],
+            dtype=self._command.dtype,
+            device=self.device,
+          )
