@@ -177,6 +177,30 @@ def evaluate(
   skill_term_name = active_commands[0] if active_commands else "twist"
   skill_term = env.command_manager.get_term(skill_term_name)
 
+  # Flight window of the jump, read from whichever command term owns the jump
+  # state so the measurement cannot drift from the reward.
+  term_cfg = skill_term.cfg if skill_term is not None else None
+  jump_flight_window = getattr(term_cfg, "flight_window", None) or getattr(
+    term_cfg, "jump_flight_window", (0.10, 0.22)
+  )
+  # Contact-pattern criterion for "all four feet left the ground together",
+  # taken from the Go2 moving-jump task (`jump_contact_match` in
+  # `src/tasks/robots/go2/skills/jump/mdp/rewards.py`): at every step the four
+  # feet must share one contact state. It needs no per-foot liftoff timestamps,
+  # so unlike the spread metric it cannot select the takeoffs it can measure --
+  # a staggered push-off simply has steps with mixed contact states.
+  split_contact_steps = 0
+  window_steps = 0
+  # Length of the mixed-contact run immediately before each takeoff: the real
+  # push-off stagger, read off the contact pattern. `takeoff_spread_mean` is
+  # reported too, but it inherits each foot's *most recent* liftoff step, so a
+  # foot whose liftoff sample was missed keeps a stamp from an earlier cycle and
+  # an otherwise clean takeoff reads as a 1.7 s stagger (measured: max 172 steps
+  # against a 26 ms push-off). This measure has no such memory.
+  mixed_run = torch.zeros(num_envs, dtype=torch.long, device=device)
+  was_raw_airborne = torch.zeros(num_envs, dtype=torch.bool, device=device)
+  takeoff_staggers: list[int] = []
+
   for _ in range(steps):
     with torch.no_grad():
       actions = policy(observation)
@@ -219,6 +243,23 @@ def evaluate(
     contact = _contact_flags(env, "feet_ground_contact")
     feet_down = (contact > 0.5).sum(dim=1).float()
     airborne = feet_down < 0.5
+
+    # All four feet in one contact state, inside the jump's flight window.
+    together = (contact == contact[:, :1]).all(dim=1)
+    if isinstance(skill_term, (SkillCommandTerm, JumpCommand)):
+      phase = skill_term.phase
+      low, high = jump_flight_window
+      in_window = (phase >= low) & (phase < high) & is_jump
+      window_steps += int(in_window.sum())
+      split_contact_steps += int((in_window & ~together).sum())
+      # Snapshot before the update: on the takeoff step all four feet are off,
+      # so `together` is true and the counter is about to be reset.
+      previous_mixed = mixed_run.clone()
+      new_airborne = airborne & ~was_raw_airborne
+      if bool(new_airborne.any()):
+        takeoff_staggers.extend(previous_mixed[new_airborne & is_jump].tolist())
+      was_raw_airborne = airborne
+    mixed_run = torch.where(together, torch.zeros_like(mixed_run), mixed_run + 1)
 
     step_counter += 1
     air_run = torch.where(airborne, air_run + 1, air_run)
@@ -393,6 +434,33 @@ def evaluate(
         entry["substantial_flights_per_jump_cycle"] = float(substantial / seconds * 2.5)
     skill_reports[name] = entry
   report["skills"] = skill_reports
+  report["jump_contact_pattern"] = {
+    "window_steps": window_steps,
+    "split_contact_steps": split_contact_steps,
+    "four_feet_together_fraction": (
+      1.0 - split_contact_steps / window_steps if window_steps else None
+    ),
+    "definition": (
+      "fraction of flight-window steps at which all four feet share one contact "
+      "state; the Go2 moving-jump `jump_contact_match` criterion. A staggered "
+      "push-off has mixed contact states, a simultaneous one does not."
+    ),
+    "flight_window": list(jump_flight_window),
+  }
+  if takeoff_staggers:
+    stagger = torch.tensor(takeoff_staggers, dtype=torch.float32)
+    report["jump_takeoff_stagger"] = {
+      "takeoffs": int(stagger.numel()),
+      "steps_mean": float(stagger.mean()),
+      "steps_median": float(stagger.median()),
+      "steps_max": float(stagger.max()),
+      "share_within_2_steps": float((stagger <= 2).float().mean()),
+      "definition": (
+        "steps of mixed contact states immediately before all four feet are off "
+        "the ground, read from the contact pattern (no per-foot liftoff "
+        "records). One control step is 10 ms and the push-off lasts ~2.6 steps."
+      ),
+    }
   report["jump_takeoffs"] = jump_takeoffs
   report["jump_recoveries"] = jump_recoveries
   report["jump_recovery_ratio"] = (
