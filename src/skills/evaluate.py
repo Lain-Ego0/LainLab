@@ -156,6 +156,19 @@ def evaluate(
   step_counter = 0
   takeoff_pending = torch.zeros(num_envs, dtype=torch.bool, device=device)
   takeoff_spreads: dict[str, list[float]] = {name: [] for name in names}
+  # Airborne run lengths. The airborne *fraction* alone cannot tell a discrete
+  # jump from a bounce: five 0.14 s bounces and one 0.7 s flight both fill a
+  # 0.75 s reward window. Only the run-length distribution separates them, so it
+  # is measured and reported rather than inferred.
+  air_run = torch.zeros(num_envs, dtype=torch.long, device=device)
+  air_runs: dict[str, list[int]] = {name: [] for name in names}
+  # Apex of each individual flight. The global height maximum only proves that
+  # *one* flight anywhere in the episode got high enough, which a bouncing
+  # policy satisfies by accident; the per-flight distribution is what says
+  # whether every jump clears the bar.
+  air_peak = torch.full((num_envs,), -1.0, device=device)
+  air_peaks: dict[str, list[float]] = {name: [] for name in names}
+  env_steps: dict[str, int] = {name: 0 for name in names}
 
   observation, _ = env.reset()
   # Single-skill tasks call their command term `twist` or `jump`; the unified
@@ -208,6 +221,9 @@ def evaluate(
     airborne = feet_down < 0.5
 
     step_counter += 1
+    air_run = torch.where(airborne, air_run + 1, air_run)
+    air_peak = torch.where(airborne, torch.maximum(air_peak, height), air_peak)
+    ended = ~airborne & (air_run > 0)
     foot_contact = contact > 0.5
     lifted = foot_was_contact & ~foot_contact
     foot_liftoff = torch.where(
@@ -245,10 +261,14 @@ def evaluate(
 
     drift = torch.norm(robot.data.root_link_pos_w[:, :2] - start_xy, dim=1)
     for name, mask in masks.items():
-      if name == "jump":
-        takeoff_spreads[name].extend(spread[mask & fresh_takeoff].tolist())
       if not bool(mask.any()):
         continue
+      env_steps[name] += int(mask.sum())
+      if name == "jump":
+        takeoff_spreads[name].extend(spread[mask & fresh_takeoff].tolist())
+      if bool((ended & mask).any()):
+        air_runs[name].extend(air_run[ended & mask].tolist())
+        air_peaks[name].extend((air_peak[ended & mask] - STANDING_HEIGHT).tolist())
       bucket = per_skill[name]
       bucket["height"].extend(height[mask].tolist())
       bucket["alignment"].extend(alignment[mask].tolist())
@@ -258,6 +278,9 @@ def evaluate(
       bucket["upright"].extend(upright[mask].tolist())
       bucket["velocity_error"].extend(velocity_error[mask].tolist())
       bucket["foot_contact"].append(contact[mask].mean(dim=0))
+
+    air_run = torch.where(airborne, air_run, torch.zeros_like(air_run))
+    air_peak = torch.where(airborne, air_peak, torch.full_like(air_peak, -1.0))
 
     if isinstance(skill_term, (SkillCommandTerm, JumpCommand)):
       left_ground = skill_term.left_ground
@@ -314,6 +337,15 @@ def evaluate(
       ),
       "velocity_error_mean": float(torch.tensor(bucket["velocity_error"]).mean()),
     }
+    if air_runs.get(name) and env_steps.get(name, 0) > 0:
+      lengths = torch.tensor(air_runs[name], dtype=torch.float32)
+      seconds = env_steps[name] * float(env.step_dt)
+      entry["flight_count_per_env_second"] = float(lengths.numel() / seconds)
+      entry["flight_mean_s"] = float(lengths.mean() * env.step_dt)
+      entry["flight_median_s"] = float(lengths.median() * env.step_dt)
+      entry["flight_max_s"] = float(lengths.max() * env.step_dt)
+      # One flight per 2.5 s jump cycle works out to 0.4 per env-second.
+      entry["flights_per_jump_cycle"] = float(lengths.numel() / seconds * 2.5)
     if takeoff_spreads.get(name):
       spreads = torch.tensor(takeoff_spreads[name])
       entry["takeoff_spread_mean"] = float(spreads.mean())
@@ -341,6 +373,24 @@ def evaluate(
       entry["passes_jump_height"] = float(
         (height_t.max() - STANDING_HEIGHT) >= JUMP_RISE_TARGET
       )
+      if air_peaks.get(name):
+        peaks = torch.tensor(air_peaks[name], dtype=torch.float32)
+        entry["flight_apex_rise_mean"] = float(peaks.mean())
+        entry["flight_apex_rise_median"] = float(peaks.median())
+        entry["flight_apex_rise_max"] = float(peaks.max())
+        # Fraction of *individual* flights that clear the target height. This is
+        # the honest form of `passes_jump_height`: a bouncing policy passes the
+        # global test with a single lucky flight and fails this one.
+        entry["passes_jump_height_per_flight"] = float(
+          (peaks >= JUMP_RISE_TARGET).float().mean()
+        )
+        # Bouncing inflates the raw flight count with 1-2 cm shuffles that a
+        # walking gait also produces. Counting only flights that clear the target
+        # height is the metric that should read exactly 1.0 per cycle; the raw
+        # count stays in the report for context.
+        seconds = env_steps[name] * float(env.step_dt)
+        substantial = int((peaks >= JUMP_RISE_TARGET).sum())
+        entry["substantial_flights_per_jump_cycle"] = float(substantial / seconds * 2.5)
     skill_reports[name] = entry
   report["skills"] = skill_reports
   report["jump_takeoffs"] = jump_takeoffs

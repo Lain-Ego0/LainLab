@@ -52,6 +52,8 @@ class JumpCommandCfg(CommandTermCfg):
   """Commanded ``[vx, vy, wz]`` carried through the jump."""
   spread_tolerance: float = 2.0
   """Takeoff spread (control steps) at which the simultaneity reward halves."""
+  flight_window: tuple[float, float] = (0.10, 0.22)
+  """Phase slice that counts as the jump; must match the reward window."""
 
   def build(self, env: ManagerBasedRlEnv) -> "JumpCommand":
     return JumpCommand(self, env)
@@ -74,6 +76,7 @@ class JumpCommand(CommandTerm):
         takeoff_margin=cfg.takeoff_margin,
         twist_ranges=cfg.twist_ranges,
         spread_tolerance=cfg.spread_tolerance,
+        flight_window=cfg.flight_window,
       ),
     )
     self._command = torch.zeros(self.num_envs, 3, device=self.device)
@@ -106,6 +109,9 @@ class JumpCommand(CommandTerm):
 
   def simultaneity(self) -> torch.Tensor:
     return self.state.simultaneity()
+
+  def first_flight_gate(self) -> torch.Tensor:
+    return self.state.first_flight_gate()
 
   @property
   def command(self) -> torch.Tensor:

@@ -99,6 +99,9 @@ def _configure_jump_rewards(
     "takeoff_simultaneity": RewardTermCfg(
       func=jump_rewards.takeoff_simultaneity, weight=2.0
     ),
+    # Travel on the ground between jumps, which is what makes the cycle a jump
+    # rather than a bounce.
+    "ground_travel": RewardTermCfg(func=jump_rewards.ground_travel, weight=1.0),
     "upright": RewardTermCfg(func=jump_rewards.upright, weight=1.0),
     "alive": RewardTermCfg(func=envs_mdp.is_alive, weight=1.0),
     "failure": RewardTermCfg(func=jump_rewards.jump_failure, weight=-5.0),

@@ -55,6 +55,34 @@ def _contact_flags(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
   return flags
 
 
+FLIGHT_WINDOW = (0.10, 0.22)
+"""Slice of the jump cycle during which flight is rewarded.
+
+Deliberately only 0.30 s. The window gates *when* flight pays, not *how often*,
+so a long window is filled with as many short bounces as fit in it -- a 0.75 s
+window produced 5.4 bounces per cycle (2.2 per second, each ~0.14 s) instead of
+one jump. One flight needs 0.14-0.23 s, so a 0.30 s window admits exactly one.
+"""
+
+
+def ground_travel(
+  env: ManagerBasedRlEnv,
+  command_name: str = "jump",
+  airborne_window: tuple[float, float] = (0.05, 0.30),
+) -> torch.Tensor:
+  """Reward staying on the ground and tracking the twist outside the jump.
+
+  Without this the only thing separating "jump" from "travel" is the reward
+  window, and bounce-farming is re-discovered whenever the window is loosened.
+  Compatible with a moving jump: it does not require all four feet down, only
+  that the robot is not airborne, so any gait satisfies it.
+  """
+  term = _jump_term(env, command_name)
+  on_ground = ~term.airborne()
+  in_window = phase_window(term.phase, *airborne_window)
+  return on_ground.float() * (1.0 - in_window) * twist_tracking(env, command_name)
+
+
 def phase_window(phase: torch.Tensor, start: float, end: float) -> torch.Tensor:
   """Float mask for the slice of the jump cycle inside ``[start, end)``."""
   return ((phase >= start) & (phase < end)).float()
@@ -63,7 +91,7 @@ def phase_window(phase: torch.Tensor, start: float, end: float) -> torch.Tensor:
 def flight(
   env: ManagerBasedRlEnv,
   command_name: str = "jump",
-  window: tuple[float, float] = (0.10, 0.40),
+  window: tuple[float, float] = FLIGHT_WINDOW,
 ) -> torch.Tensor:
   """Pay while every foot is off the ground, but only inside the flight window.
 
@@ -74,7 +102,7 @@ def flight(
   term = _jump_term(env, command_name)
   airborne = term.airborne().float()
   env.extras.setdefault("log", {})["Metrics/jump_airborne_frac"] = airborne.mean()
-  return airborne * phase_window(term.phase, *window)
+  return airborne * phase_window(term.phase, *window) * term.first_flight_gate()
 
 
 def apex_height(
@@ -83,7 +111,7 @@ def apex_height(
   standing_height: float = 0.151,
   target_rise: float = 0.05,
   tolerance: float = 0.035,
-  window: tuple[float, float] = (0.10, 0.40),
+  window: tuple[float, float] = FLIGHT_WINDOW,
 ) -> torch.Tensor:
   """Reward the base being at ``standing_height + target_rise``.
 
@@ -99,7 +127,7 @@ def apex_height(
     term.peak_height - standing_height
   ).mean()
   height_reward = torch.clamp(1.0 - torch.square(error), min=0.0)
-  return height_reward * phase_window(term.phase, *window)
+  return height_reward * phase_window(term.phase, *window) * term.first_flight_gate()
 
 
 def upright(
@@ -153,7 +181,7 @@ def twist_tracking(
 def takeoff_simultaneity(
   env: ManagerBasedRlEnv,
   command_name: str = "jump",
-  window: tuple[float, float] = (0.10, 0.40),
+  window: tuple[float, float] = FLIGHT_WINDOW,
 ) -> torch.Tensor:
   """Reward all four feet leaving the ground together.
 

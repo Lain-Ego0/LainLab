@@ -103,6 +103,7 @@ def _skills_command_cfg(
   play: bool,
   twist_ranges: tuple[tuple[float, float], ...],
   spread_tolerance: float,
+  flight_window: tuple[float, float],
 ) -> SkillCommandCfg:
   return SkillCommandCfg(
     entity_name="robot",
@@ -114,6 +115,7 @@ def _skills_command_cfg(
     ),
     jump_twist_ranges=twist_ranges,
     jump_spread_tolerance=spread_tolerance,
+    jump_flight_window=flight_window,
     jump_period_s=jump_period_s,
     standing_height=standing_height,
     switch_prob=switch_prob,
@@ -191,6 +193,7 @@ def make_skills_env_cfg(
       play=play,
       twist_ranges=jump_command_cfg.twist_ranges,
       spread_tolerance=jump_command_cfg.spread_tolerance,
+      flight_window=jump_command_cfg.flight_window,
     )
   }
   skill_observation = ObservationTermCfg(

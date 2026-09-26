@@ -41,6 +41,14 @@ class JumpStateCfg:
   The whole push-off is only ~2.6 control steps, so all four feet leaving within
   two steps is already a well synchronised jump.
   """
+  flight_window: tuple[float, float] = (0.10, 0.22)
+  """Phase slice in which an airborne moment counts as *the* jump.
+
+  An airborne moment outside this window is ordinary gait suspension. A walking
+  policy lifts its feet long before the push-off, so gating on *any* airborne
+  moment let the gait consume the single allowed flight per cycle before the
+  window opened, collapsing the flight reward.
+  """
 
 
 class JumpState:
@@ -61,6 +69,10 @@ class JumpState:
     self.takeoff_spread = torch.zeros(num_envs, device=device)
     self.takeoff_complete = torch.zeros(num_envs, dtype=torch.bool, device=device)
     self._takeoff_edge = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    # One flight per cycle: latched once the first flight of the cycle has ended,
+    # cleared when the phase clock wraps.
+    self.flight_used = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    self._in_window_takeoff = torch.zeros(num_envs, dtype=torch.bool, device=device)
 
   def reset(self, env_ids: torch.Tensor) -> None:
     self.phase[env_ids] = 0.0
@@ -73,6 +85,8 @@ class JumpState:
     self.takeoff_spread[env_ids] = 0.0
     self.takeoff_complete[env_ids] = False
     self._takeoff_edge[env_ids] = False
+    self.flight_used[env_ids] = False
+    self._in_window_takeoff[env_ids] = False
 
   def sample_twist(self, env_ids: torch.Tensor) -> None:
     """Sample a fresh horizontal twist command for these environments."""
@@ -99,7 +113,15 @@ class JumpState:
     ids = (
       torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
     )
+    previous_phase = self.phase[ids].clone()
     self.phase[ids] = (self.phase[ids] + dt / self.cfg.period_s) % 1.0
+    wrapped = self.phase[ids] < previous_phase
+    self.flight_used[ids] = torch.where(
+      wrapped, torch.zeros_like(wrapped), self.flight_used[ids]
+    )
+    self._in_window_takeoff[ids] = torch.where(
+      wrapped, torch.zeros_like(wrapped), self._in_window_takeoff[ids]
+    )
     self.peak_height[ids] = torch.maximum(self.peak_height[ids], base_height[ids])
     took_off = (
       self.grounded_once[ids]
@@ -110,6 +132,17 @@ class JumpState:
     self.grounded_once[ids] |= ~airborne[ids]
 
     self._update_takeoff(ids, feet_contact=feet_contact, step_index=step_index)
+
+    # The one-flight budget is spent by a takeoff *inside the jump window*, and
+    # only when that flight ends. Counting any airborne moment instead (the
+    # first version) let the travel gait's own suspension phases -- which also
+    # lift all four feet -- consume the budget before the window opened, and the
+    # flight reward collapsed to 0.004.
+    low, high = self.cfg.flight_window
+    in_window = (self.phase[ids] >= low) & (self.phase[ids] < high)
+    self._in_window_takeoff[ids] |= self._takeoff_edge[ids] & in_window
+    landed_now = feet_contact[ids].any(dim=-1)
+    self.flight_used[ids] |= self._in_window_takeoff[ids] & landed_now
 
   def _update_takeoff(
     self,
@@ -142,7 +175,7 @@ class JumpState:
     self._takeoff_edge[ids] = fresh
 
     # Clear each foot's record on *its own* landing. Clearing all four whenever
-    # any foot lands (the previous behaviour) deletes the liftoff record of feet
+    # any foot lands (the earlier behaviour) deletes the liftoff record of feet
     # that are still in the air, so a takeoff could only be registered when all
     # four lifted together from a fully grounded stance. Measured consequence:
     # 144 of 521 airborne runs registered, and the recorded spread was 0 in
@@ -163,6 +196,16 @@ class JumpState:
   def takeoff_edge(self) -> torch.Tensor:
     """True on the step a four-foot takeoff was just finalised."""
     return self._takeoff_edge
+
+  def first_flight_gate(self) -> torch.Tensor:
+    """1.0 while the cycle's first flight is still in progress, else 0.0.
+
+    Paying flight rewards per airborne step cannot distinguish one jump from
+    several: two 0.14 s bounces earn exactly what one 0.28 s flight earns, so the
+    policy is free to bounce. Gating on the first flight of the cycle removes
+    that freedom. Measured before the gate existed: 2.7 flights per cycle.
+    """
+    return (~self.flight_used).float()
 
   def simultaneity(self) -> torch.Tensor:
     """``exp(-spread / tolerance)`` while a completed takeoff is in effect."""

@@ -71,6 +71,8 @@ class SkillCommandCfg(CommandTermCfg):
   """Commanded ``[vx, vy, wz]`` carried through the jump; harvested from the jump task."""
   jump_spread_tolerance: float = 2.0
   """Takeoff spread (control steps) at which the jump simultaneity reward halves."""
+  jump_flight_window: tuple[float, float] = (0.10, 0.22)
+  """Phase slice that counts as the jump; must match the reward window."""
   switch_prob: float = 0.0
   """Per-step probability of switching skill mid-episode (transition training)."""
   skill_weights: tuple[float, ...] = field(default_factory=tuple)
@@ -102,6 +104,7 @@ class SkillCommandTerm(CommandTerm):
         takeoff_margin=cfg.takeoff_margin,
         twist_ranges=cfg.jump_twist_ranges,
         spread_tolerance=cfg.jump_spread_tolerance,
+        flight_window=cfg.jump_flight_window,
       ),
     )
     self._walk_time_left = torch.zeros(self.num_envs, device=self.device)
@@ -169,6 +172,9 @@ class SkillCommandTerm(CommandTerm):
 
   def simultaneity(self) -> torch.Tensor:
     return self.jump.simultaneity()
+
+  def first_flight_gate(self) -> torch.Tensor:
+    return self.jump.first_flight_gate()
 
   def skill_phase(self) -> torch.Tensor:
     """``[sin, cos]`` of the phase clock, shape ``[B, 2]``."""
