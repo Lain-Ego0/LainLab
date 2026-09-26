@@ -326,10 +326,12 @@ def register_skills_profile(
     learning_rate=learning_rate,
     entropy_coef=entropy_coef,
   )
-  # Shared head plus a per-skill residual initialised to zero; see
-  # `SharedResidualActor` for why neither a flat head nor independent per-skill
-  # heads is the right default (docs section 5.8).
-  rl_cfg.actor.class_name = "src.tasks.skills.rl:SharedResidualActor"
+  # Flat shared output layer. The per-skill variants (`SkillHeadedActor`,
+  # `SharedResidualActor`) are implemented and unit-tested but measured *worse*
+  # on handover -- aggregate 0.9255-0.9301 against the flat head's 0.9389, and
+  # `handstand->walk` 0.491-0.555 against 0.678 -- so the best-measured
+  # architecture is the default (docs section 5.8.3).
+  rl_cfg.actor.class_name = "rsl_rl.models.mlp_model:MLPModel"
   register_mjlab_task(
     task_id=task_id,
     env_cfg=env_cfg,

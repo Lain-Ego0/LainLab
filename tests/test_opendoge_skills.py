@@ -324,7 +324,9 @@ def test_bc_artifact_loads_into_the_policy_the_evaluator_builds() -> None:
   try:
     agent_cfg = load_rl_cfg(TASK_ID)
     assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
-    assert agent_cfg.actor.class_name.endswith("SharedResidualActor")
+    # Deliberately no assertion about *which* architecture is registered: the
+    # contract under test is that whatever `class_name` names can be built by
+    # both sides and load the artifact.
     wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     runner_cls = load_runner_cls(TASK_ID)
     assert runner_cls is not None
@@ -361,9 +363,9 @@ def test_skill_residuals_start_as_a_no_op() -> None:
   any specialisation from data. A non-zero residual init would silently give
   that up while still passing every other test.
   """
-  from src.skills.bc import build_student
+  from src.tasks.skills.rl import SharedResidualActor
 
-  student = build_student("cpu")
+  student = _experimental_actor(SharedResidualActor)
   state = student.state_dict()
   assert student.num_skills == len(SKILL_NAMES)
   assert any(key.startswith("mlp.") for key in state), "the shared trunk is gone"
@@ -403,6 +405,23 @@ def test_skill_residuals_start_as_a_no_op() -> None:
   first = actions[0]
   assert not torch.allclose(first, actions[1])
   assert student.skill_index(obs).tolist() == list(range(len(SKILL_NAMES)))
+
+
+def _experimental_actor(actor_class):
+  """Build one of the non-default architectures with the student's settings."""
+  from src.skills.bc import ACTION_DIM, HIDDEN_DIMS, OBS_DIM
+  from tensordict import TensorDict
+
+  return actor_class(
+    TensorDict({"actor": torch.zeros(1, OBS_DIM)}, batch_size=[1]),
+    {"actor": ["actor"]},
+    "actor",
+    ACTION_DIM,
+    list(HIDDEN_DIMS),
+    "elu",
+    True,
+    {"class_name": "GaussianDistribution", "init_std": 1.0, "std_type": "scalar"},
+  )
 
 
 def _tensor_dict(obs: torch.Tensor):
