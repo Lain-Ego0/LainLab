@@ -29,6 +29,10 @@
   x(-1.0, 1.5) / y(-0.5, 0.5) / yaw(-0.7, 0.7)（仅影响回放/评测，不影响训练）。
 - 版本化 baseline 由仓库根移入包内 `src/baseline/`，随 wheel 分发：`baseline-play`
   以及 `opendoge-collect` 的专家来源不再依赖“当前工作目录是仓库根”这一假设。
+- 移除开发期的静态类型检查（pyright）：`make type` 目标、`[tool.pyright]` 配置、
+  `pyright` 开发依赖与手写的 `typings/mujoco` 桩一并删除；`make check` 现在只跑
+  `lint + test`。此前该检查长期有 200+ 条误报（`mujoco` 未带类型、测试与 vendored
+  代码占了绝大多数），既当不了门禁也没人维护。
 
 ### Added
 

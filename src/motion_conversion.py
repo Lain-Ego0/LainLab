@@ -134,8 +134,8 @@ def convert_csv_to_npz(
     motion_file=input_file,
     # MotionLoader's annotations say int, but its arithmetic and mjlab's own
     # public converter accept fractional frame rates.
-    input_fps=input_fps,  # pyright: ignore[reportArgumentType]
-    output_fps=output_fps,  # pyright: ignore[reportArgumentType]
+    input_fps=input_fps,
+    output_fps=output_fps,
     device=sim.device,
     line_range=line_range,
   )

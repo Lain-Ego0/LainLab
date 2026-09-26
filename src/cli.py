@@ -20,7 +20,7 @@ def play() -> None:
 
   from src.viewer import TerrainLevelViserPlayViewer
 
-  mjlab_play.ViserPlayViewer = TerrainLevelViserPlayViewer  # pyright: ignore[reportPrivateImportUsage]
+  mjlab_play.ViserPlayViewer = TerrainLevelViserPlayViewer
   mjlab_play.main()
 
 
@@ -47,7 +47,7 @@ def play_baseline() -> None:
 
   from src.viewer import TerrainLevelViserPlayViewer
 
-  mjlab_play.ViserPlayViewer = TerrainLevelViserPlayViewer  # pyright: ignore[reportPrivateImportUsage]
+  mjlab_play.ViserPlayViewer = TerrainLevelViserPlayViewer
   if not any(arg == "--viewer" or arg.startswith("--viewer=") for arg in play_args):
     play_args = ["--viewer", "viser", *play_args]
   sys.argv = [

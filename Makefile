@@ -1,4 +1,4 @@
-.PHONY: sync format lint type test check list
+.PHONY: sync format lint test check list
 
 sync:
 	uv sync --extra cu128
@@ -11,13 +11,10 @@ lint:
 	uv run ruff format --check
 	uv run ruff check
 
-type:
-	uv run pyright
-
 test:
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
 
-check: lint type test
+check: lint test
 
 list:
 	uv run list-envs

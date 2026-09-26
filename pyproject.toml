@@ -39,7 +39,6 @@ opendoge-export = "src.toolchain.export:main"
 [dependency-groups]
 dev = [
   "pre-commit>=4.3.0",
-  "pyright>=1.1.408",
   "pytest>=9.0.3",
   "ruff>=0.16.1",
 ]
@@ -79,13 +78,6 @@ indent-width = 2
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B"]
 ignore = ["B011"]
-
-[tool.pyright]
-pythonVersion = "3.10"
-venvPath = "."
-venv = ".venv"
-include = ["src", "tests"]
-stubPath = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
