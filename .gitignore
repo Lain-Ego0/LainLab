@@ -38,6 +38,7 @@ Makefile.user
 
 # Independent workbench runtime and frontend dependencies
 .src-workbench/
+.lloco-workbench/
 node_modules/
 
 # Versioned baseline policies ship inside the package so wheels include them.
