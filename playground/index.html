@@ -54,7 +54,7 @@
       </div>
 
       <aside id="cmdPanel" class="cmd-panel" aria-label="CMD 控制器" hidden>
-        <div class="panel-heading">
+        <div class="panel-heading" title="按住标题拖动面板">
           <div><p class="panel-kicker">PLAYGROUND / CMD</p><strong>运动指令</strong></div>
           <button id="cmdClose" class="icon-button" aria-label="关闭 CMD 控制器">×</button>
         </div>
@@ -75,7 +75,7 @@
       </aside>
 
       <aside id="monitorPanel" class="monitor-panel" aria-label="策略监测" hidden>
-        <div class="panel-heading">
+        <div class="panel-heading" title="按住标题拖动面板">
           <div><p class="panel-kicker">PLAYGROUND / TELEMETRY</p><strong>策略监测</strong></div>
           <button id="monitorClose" class="icon-button" aria-label="关闭策略监测">×</button>
         </div>
@@ -85,7 +85,7 @@
       </aside>
 
       <aside id="terrainPanel" class="terrain-panel" aria-label="地形编辑器" hidden>
-        <div class="panel-heading">
+        <div class="panel-heading" title="按住标题拖动面板">
           <div><p class="panel-kicker">PLAYGROUND / TERRAIN</p><strong>地形编辑器</strong></div>
           <button id="terrainClose" class="icon-button" aria-label="关闭地形编辑器">×</button>
         </div>
@@ -97,17 +97,27 @@
         <div class="terrain-tools" aria-label="障碍工具">
           <button data-terrain-tool="platform" class="active">高台</button><button data-terrain-tool="stairs">台阶</button><button data-terrain-tool="ramp">斜坡</button><button data-terrain-tool="stones">梅花桩</button><button data-terrain-tool="wall">矮墙</button>
         </div>
-        <canvas id="terrainMap" width="520" height="260" aria-label="地形俯视编辑画布"></canvas>
-        <p id="terrainHint" class="terrain-hint">选择工具后，在场地中点击放置。点击已有标记可选中。</p>
+        <canvas id="terrainMap" width="520" height="260" aria-label="地形俯视编辑画布；拖动已有障碍可调整位置"></canvas>
+        <p id="terrainHint" class="terrain-hint">点击俯视图空白处放置障碍；直接拖动已有标记调整位置。最后点击“应用到场景”。</p>
         <div id="terrainElements" class="terrain-elements"></div>
         <div id="terrainElementEditor" class="terrain-element-editor" hidden>
-          <strong>选中障碍参数</strong>
-          <label>位置 X<input id="elementX" type="number" step="0.1" /></label>
-          <label>位置 Y<input id="elementY" type="number" step="0.1" /></label>
-          <label>高度<input id="elementHeight" type="number" min="0.04" max="2" step="0.02" /></label>
-          <label>长度倍率<input id="elementScaleX" type="number" min="0.2" max="4" step="0.1" /></label>
-          <label>宽度倍率<input id="elementScaleY" type="number" min="0.2" max="4" step="0.1" /></label>
-          <label>朝向 °<input id="elementYaw" type="number" min="-180" max="180" step="5" /></label>
+          <strong id="elementEditorTitle">选中障碍</strong>
+          <label>位置 X · m<input id="elementX" type="number" min="-10" max="10" step="0.1" /></label>
+          <label>位置 Y · m<input id="elementY" type="number" min="-8" max="8" step="0.1" /></label>
+          <label>朝向 · °<input id="elementYaw" type="number" min="-180" max="180" step="5" /></label>
+          <label data-element-for="platform wall ramp stones">长度 · m<input id="elementLength" type="number" min="0.05" max="10" step="0.01" /></label>
+          <label data-element-for="platform wall ramp stones">宽度 · m<input id="elementWidth" type="number" min="0.05" max="10" step="0.01" /></label>
+          <label data-element-for="platform wall ramp stones">高度 · m<input id="elementHeight" type="number" min="0.04" max="10" step="0.01" /></label>
+          <label data-element-for="stairs">每阶深度 · m<input id="stepDepth" type="number" min="0.05" max="2" step="0.01" /></label>
+          <label data-element-for="stairs">每阶宽度 · m<input id="stepWidth" type="number" min="0.05" max="10" step="0.01" /></label>
+          <label data-element-for="stairs">每阶高度 · m<input id="stepHeight" type="number" min="0.02" max="1" step="0.01" /></label>
+          <label data-element-for="stairs">台阶数量<input id="stepCount" type="number" min="1" max="20" step="1" /></label>
+          <label data-element-for="ramp">斜率 · %<input id="elementSlope" type="number" min="1" max="100" step="0.01" /></label>
+          <label data-element-for="stones">横向数量<input id="stoneColumns" type="number" min="1" max="8" step="1" /></label>
+          <label data-element-for="stones">纵向数量<input id="stoneRows" type="number" min="1" max="8" step="1" /></label>
+          <label data-element-for="stones">横向间距 · m<input id="stoneGapX" type="number" min="0" max="5" step="0.01" /></label>
+          <label data-element-for="stones">纵向间距 · m<input id="stoneGapY" type="number" min="0" max="5" step="0.01" /></label>
+          <label data-element-for="stones">排布<select id="stoneLayout"><option value="aligned">并列</option><option value="staggered">交错</option><option value="diagonal">斜列</option></select></label>
         </div>
         <div class="terrain-actions">
           <button id="terrainClear">清空</button><button id="terrainExport">导出 JSON</button>

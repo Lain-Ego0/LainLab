@@ -376,13 +376,27 @@ function seededRandom(seed) {
   };
 }
 
-function box(x, y, z, sx, sy, sz, ry = 0, label = "障碍") {
-  return { x, y, z, sx, sy, sz, ry, label };
+function box(x, y, z, sx, sy, sz, yaw = 0, label = "障碍") {
+  return { x, y, z, sx, sy, sz, yaw, label };
+}
+
+// A closed wedge: the low edge rests on z=0 and the high edge reaches height.
+const rampFaces = [0, 1, 2, 3, 5, 4, 0, 3, 4, 0, 4, 1, 1, 4, 5, 1, 5, 2, 0, 2, 5, 0, 5, 3];
+
+function ramp(x, y, height, sx, sy, yaw = 0, label = "斜坡") {
+  return { type: "ramp", x, y, z: height / 2, sx, sy, sz: height / 2, yaw, label };
+}
+
+function rampVertices({ sx, sy, sz }) {
+  return [
+    -sx, -sy, -sz, sx, -sy, -sz, sx, -sy, sz,
+    -sx, sy, -sz, sx, sy, -sz, sx, sy, sz,
+  ];
 }
 
 function profileBoxes() {
   const height = terrainState.height;
-  if (terrainState.kind === "slope") return [box(3.8, 0, height / 2, 3.2, 3.2, height / 2, -0.11, "坡道")];
+  if (terrainState.kind === "slope") return [ramp(3.8, 0, height, 3.2, 3.2, 0, "坡道")];
   if (terrainState.kind === "stairs") return Array.from({ length: 7 }, (_, index) => {
     const step = index + 1;
     return box(2 + index * 0.62, 0, height * step / 14, 0.31, 1.8, height * step / 14, 0, "阶梯");
@@ -404,13 +418,35 @@ function profileBoxes() {
 function elementBoxes(element) {
   const { x, y, kind } = element;
   const height = Number.isFinite(element.height) ? element.height : terrainState.height;
-  const scaleX = Number.isFinite(element.scaleX) ? element.scaleX : 1;
-  const scaleY = Number.isFinite(element.scaleY) ? element.scaleY : 1;
-  if (kind === "stairs") return Array.from({ length: 5 }, (_, index) => box(x + (index - 2) * 0.28 * scaleX, y, height * (index + 1) / 10, 0.14 * scaleX, 0.8 * scaleY, height * (index + 1) / 10, element.yaw || 0, "台阶"));
-  if (kind === "ramp") return [box(x, y, height / 2, 1.2 * scaleX, 0.9 * scaleY, height / 2, element.yaw || -0.18, "斜坡")];
-  if (kind === "stones") return Array.from({ length: 6 }, (_, index) => box(x + (index % 3 - 1) * 0.42 * scaleX, y + (Math.floor(index / 3) - .5) * 0.6 * scaleY, height / 4, .14 * scaleX, .14 * scaleY, height / 4, 0, "梅花桩"));
-  if (kind === "wall") return [box(x, y, height / 2, 1.25 * scaleX, .12 * scaleY, height / 2, element.yaw || 0, "矮墙")];
-  return [box(x, y, height / 2, 0.9 * scaleX, 0.9 * scaleY, height / 2, element.yaw || 0, "高台")];
+  const length = element.length ?? 1.8;
+  const width = element.width ?? 1.8;
+  const yaw = element.yaw || 0;
+  const placedBox = (localX, localY, z, sx, sy, sz, label) => {
+    const rotatedX = localX * Math.cos(yaw) - localY * Math.sin(yaw);
+    const rotatedY = localX * Math.sin(yaw) + localY * Math.cos(yaw);
+    return box(x + rotatedX, y + rotatedY, z, sx, sy, sz, yaw, label);
+  };
+  if (kind === "stairs") {
+    const count = element.stepCount ?? 5, depth = element.stepDepth ?? .28;
+    const stepHeight = element.stepHeight ?? .12, stepWidth = element.stepWidth ?? 1.6;
+    return Array.from({ length: count }, (_, index) => placedBox(
+      (index - (count - 1) / 2) * depth, 0, stepHeight * (index + 1) / 2,
+      depth / 2, stepWidth / 2, stepHeight * (index + 1) / 2, "台阶"));
+  }
+  if (kind === "ramp") return [ramp(x, y, height, length / 2, width / 2, yaw)];
+  if (kind === "stones") {
+    const columns = element.columns ?? 3, rows = element.rows ?? 2;
+    const gapX = element.gapX ?? .14, gapY = element.gapY ?? .32;
+    const pitchX = length + gapX, pitchY = width + gapY;
+    return Array.from({ length: columns * rows }, (_, index) => {
+      const col = index % columns, row = Math.floor(index / columns);
+      const offset = element.layout === "staggered" && row % 2 ? pitchX / 2
+        : element.layout === "diagonal" ? (row - (rows - 1) / 2) * pitchX / 2 : 0;
+      return placedBox((col - (columns - 1) / 2) * pitchX + offset, (row - (rows - 1) / 2) * pitchY,
+        height / 2, length / 2, width / 2, height / 2, "梅花桩");
+    });
+  }
+  return [placedBox(0, 0, height / 2, length / 2, width / 2, height / 2, kind === "wall" ? "矮墙" : "高台")];
 }
 
 function terrainBoxes() {
@@ -420,16 +456,27 @@ function terrainBoxes() {
 }
 
 function clearTerrainVisual() {
+  terrainVisual.traverse((node) => {
+    if (node.isMesh) {
+      node.geometry.dispose();
+      node.material.dispose();
+    }
+  });
   terrainVisual.clear();
 }
 
 function addVisualBox(definition, accent = 0x7f9bb0) {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(definition.sx * 2, definition.sy * 2, definition.sz * 2),
-    new THREE.MeshStandardMaterial({ color: accent, roughness: .76, metalness: .03 }),
-  );
+  let geometry;
+  if (definition.type === "ramp") {
+    geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(rampVertices(definition), 3));
+    geometry.setIndex(rampFaces);
+    geometry = geometry.toNonIndexed();
+    geometry.computeVertexNormals();
+  } else geometry = new THREE.BoxGeometry(definition.sx * 2, definition.sy * 2, definition.sz * 2);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: accent, roughness: .76, metalness: .03 }));
   mesh.position.set(definition.x, definition.y, definition.z);
-  mesh.rotation.y = definition.ry;
+  mesh.rotation.z = definition.yaw || 0;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   terrainVisual.add(mesh);
@@ -463,12 +510,26 @@ function terrainXml(xml = baseSceneXml) {
   const definitions = terrainBoxes();
   if (definitions.length > TERRAIN_SLOT_COUNT) throw new Error(`地形最多支持 ${TERRAIN_SLOT_COUNT} 个碰撞组件。`);
   definitions.forEach((definition, index) => {
+    const isRamp = definition.type === "ramp";
+    if (isRamp) {
+      const asset = document.querySelector("asset") || document.documentElement.insertBefore(document.createElement("asset"), worldbody);
+      const mesh = document.createElement("mesh");
+      mesh.setAttribute("name", `playground_ramp_${index}`);
+      mesh.setAttribute("vertex", rampVertices(definition).join(" "));
+      mesh.setAttribute("face", rampFaces.join(" "));
+      asset.append(mesh);
+    }
     const geom = document.createElement("geom");
     geom.setAttribute("name", `playground_terrain_${index}`);
-    geom.setAttribute("type", "box");
+    geom.setAttribute("type", isRamp ? "mesh" : "box");
     geom.setAttribute("pos", `${definition.x} ${definition.y} ${definition.z}`);
-    geom.setAttribute("size", `${definition.sx} ${definition.sy} ${definition.sz}`);
-    geom.setAttribute("euler", `0 ${definition.ry} 0`);
+    if (isRamp) {
+      geom.setAttribute("mesh", `playground_ramp_${index}`);
+      geom.setAttribute("euler", `0 0 ${definition.yaw}`);
+    } else {
+      geom.setAttribute("size", `${definition.sx} ${definition.sy} ${definition.sz}`);
+      geom.setAttribute("euler", `0 0 ${definition.yaw || 0}`);
+    }
     geom.setAttribute("rgba", "0 0 0 0");
     geom.setAttribute("friction", "0.9 0.1 0.1");
     // Match MuJoCo's stable default contact response instead of the very
@@ -495,7 +556,7 @@ async function applyTerrain() {
   try {
     if (definitions.length > TERRAIN_SLOT_COUNT) throw new Error(`地形最多支持 ${TERRAIN_SLOT_COUNT} 个碰撞组件。`);
     // Geometry topology is part of MuJoCo's collision broad-phase. Compile
-    // only active boxes, while keeping robot mesh assets cached in memory.
+    // only active geoms, while keeping robot mesh assets cached in memory.
     await new Promise((resolve) => requestAnimationFrame(resolve));
     createMujocoModel(terrainXml(), definitions.length);
     renderTerrain();
@@ -909,7 +970,7 @@ function installRobotDrag() {
     if (event.button !== 0 || !data) return;
     const hit = robotHit(event);
     if (!hit) return;
-    dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), hit.point);
+    dragPlane.setFromNormalAndCoplanarPoint(view.camera.getWorldDirection(new THREE.Vector3()), hit.point);
     const start = pointOnDragPlane(new THREE.Vector3());
     if (!start) return;
     robotDrag = { start, vector: new THREE.Vector3() };
@@ -927,7 +988,7 @@ function installRobotDrag() {
     updatePointer(event);
     const end = pointOnDragPlane(new THREE.Vector3());
     if (!end) return;
-    robotDrag.vector.copy(end).sub(robotDrag.start).setZ(0).clampLength(0, 1.15);
+    robotDrag.vector.copy(end).sub(robotDrag.start).clampLength(0, 1.15);
     const length = robotDrag.vector.length();
     dragArrow.position.copy(robotDrag.start);
     dragArrow.setDirection(length > .001 ? robotDrag.vector.clone().normalize() : new THREE.Vector3(1, 0, 0));
@@ -938,9 +999,10 @@ function installRobotDrag() {
   }, true);
   const release = (event) => {
     if (!robotDrag || !data) return;
-    const impulse = robotDrag.vector.clone().multiplyScalar(2.4);
+    const impulse = robotDrag.vector.clone().multiplyScalar(4.8);
     data.qvel[0] += impulse.x;
     data.qvel[1] += impulse.y;
+    data.qvel[2] += impulse.z;
     dragArrow.visible = false;
     robotDrag = null;
     view.orbit.enabled = true;
@@ -1001,6 +1063,17 @@ async function tick(timestamp) {
 }
 
 const terrainLabels = { platform: "高台", stairs: "台阶", ramp: "斜坡", stones: "梅花桩", wall: "矮墙" };
+const terrainDefaults = {
+  platform: { length: 1.8, width: 1.8, height: .28 },
+  wall: { length: 2.5, width: .24, height: .28 },
+  stairs: { stepDepth: .28, stepWidth: 1.6, stepHeight: .12, stepCount: 5 },
+  ramp: { length: 2.4, width: 1.8, height: .36, slope: 15 },
+  stones: { length: .28, width: .28, height: .14, columns: 3, rows: 2, gapX: .14, gapY: .32, layout: "aligned" },
+};
+
+function newTerrainElement(kind, x, y) {
+  return { kind, x, y, yaw: 0, ...terrainDefaults[kind] };
+}
 
 function terrainCanvasPosition(event) {
   const canvas = $("terrainMap");
@@ -1030,8 +1103,22 @@ function repaintTerrainMap() {
   terrainState.elements.forEach((element, index) => {
     const x = (element.x / (TERRAIN_AREA.x * 2) + .5) * width;
     const y = (.5 - element.y / (TERRAIN_AREA.y * 2)) * height;
+    context.fillStyle = index === terrainState.selected ? "#7ca8c8" : "#a2b8c9";
+    context.strokeStyle = index === terrainState.selected ? "#185a91" : "#6486a0";
+    for (const definition of elementBoxes(element)) {
+      const angle = definition.yaw || 0;
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+      context.beginPath();
+      corners.forEach(([sideX, sideY], corner) => {
+        const dx = sideX * definition.sx, dy = sideY * definition.sy;
+        const px = ((definition.x + dx * Math.cos(angle) - dy * Math.sin(angle)) / (TERRAIN_AREA.x * 2) + .5) * width;
+        const py = (.5 - (definition.y + dx * Math.sin(angle) + dy * Math.cos(angle)) / (TERRAIN_AREA.y * 2)) * height;
+        if (corner === 0) context.moveTo(px, py); else context.lineTo(px, py);
+      });
+      context.closePath(); context.fill(); context.stroke();
+    }
     context.beginPath();
-    context.arc(x, y, index === terrainState.selected ? 12 : 9, 0, Math.PI * 2);
+    context.arc(x, y, 9, 0, Math.PI * 2);
     context.fillStyle = index === terrainState.selected ? "#185a91" : "#6f94ae";
     context.fill();
     context.fillStyle = "#fff";
@@ -1046,8 +1133,10 @@ function renderTerrainElements() {
   mount.replaceChildren(...terrainState.elements.map((element, index) => {
     const row = document.createElement("div");
     row.className = `terrain-element${index === terrainState.selected ? " selected" : ""}`;
-    const elementHeight = Number.isFinite(element.height) ? element.height : terrainState.height;
-    row.innerHTML = `<span>${index + 1}. ${terrainLabels[element.kind] ?? "导入障碍"} · ${elementHeight.toFixed(2)} m</span>`;
+    const detail = element.kind === "stairs" ? `${element.stepCount} 阶`
+      : element.kind === "stones" ? `${element.columns} × ${element.rows} 株`
+        : `${(element.height ?? terrainState.height).toFixed(2)} m`;
+    row.innerHTML = `<span>${index + 1}. ${terrainLabels[element.kind] ?? "导入障碍"} · ${detail}</span>`;
     row.onclick = () => { terrainState.selected = index; repaintTerrainEditor(); };
     const remove = document.createElement("button");
     remove.textContent = "删除";
@@ -1073,22 +1162,141 @@ function updateTerrainElementEditor() {
   const element = terrainState.elements[terrainState.selected];
   $("terrainElementEditor").hidden = !element;
   if (!element) return;
+  $("elementEditorTitle").textContent = `${terrainLabels[element.kind]}参数`;
+  document.querySelectorAll("[data-element-for]").forEach((label) => {
+    label.hidden = !label.dataset.elementFor.split(" ").includes(element.kind);
+  });
   $("elementX").value = element.x.toFixed(2);
   $("elementY").value = element.y.toFixed(2);
-  $("elementHeight").value = (Number.isFinite(element.height) ? element.height : terrainState.height).toFixed(2);
-  $("elementScaleX").value = Number.isFinite(element.scaleX) ? element.scaleX : 1;
-  $("elementScaleY").value = Number.isFinite(element.scaleY) ? element.scaleY : 1;
   $("elementYaw").value = THREE.MathUtils.radToDeg(element.yaw || 0).toFixed(0);
+  const fields = {
+    elementLength: element.length, elementWidth: element.width, elementHeight: element.height,
+    stepDepth: element.stepDepth, stepWidth: element.stepWidth, stepHeight: element.stepHeight,
+    stepCount: element.stepCount, elementSlope: element.slope,
+    stoneColumns: element.columns, stoneRows: element.rows,
+    stoneGapX: element.gapX, stoneGapY: element.gapY, stoneLayout: element.layout,
+  };
+  for (const [id, value] of Object.entries(fields)) {
+    if (value !== undefined) $(id).value = typeof value === "number" ? Number(value.toFixed(2)) : value;
+  }
+}
+
+function terrainElementAt(position) {
+  return terrainState.elements.findLastIndex((element) => elementBoxes(element).some((definition) => {
+    const dx = position.x - definition.x, dy = position.y - definition.y, yaw = definition.yaw || 0;
+    const localX = dx * Math.cos(yaw) + dy * Math.sin(yaw);
+    const localY = -dx * Math.sin(yaw) + dy * Math.cos(yaw);
+    return Math.abs(localX) <= definition.sx && Math.abs(localY) <= definition.sy;
+  }) || Math.hypot(element.x - position.x, element.y - position.y) < .25);
+}
+
+function moveTerrainElement(index, x, y) {
+  const element = terrainState.elements[index];
+  if (!element) return;
+  element.x = THREE.MathUtils.clamp(x, -TERRAIN_AREA.x, TERRAIN_AREA.x);
+  element.y = THREE.MathUtils.clamp(y, -TERRAIN_AREA.y, TERRAIN_AREA.y);
+  terrainState.selected = index;
+  repaintTerrainEditor();
+  $("terrainHint").textContent = "障碍位置已更新预览；点击“应用到场景”同步物理碰撞。";
 }
 
 function addTerrainElement(position) {
-  const nearby = terrainState.elements.findIndex((element) => Math.hypot(element.x - position.x, element.y - position.y) < .45);
+  const nearby = terrainElementAt(position);
   if (nearby >= 0) terrainState.selected = nearby;
   else {
-    terrainState.elements.push({ kind: terrainState.tool, x: position.x, y: position.y, yaw: 0, height: terrainState.height, scaleX: 1, scaleY: 1 });
+    terrainState.elements.push(newTerrainElement(terrainState.tool, position.x, position.y));
     terrainState.selected = terrainState.elements.length - 1;
   }
   repaintTerrainEditor();
+}
+
+function installTerrainMapDrag() {
+  const canvas = $("terrainMap");
+  let drag = null;
+  let suppressClick = false;
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  canvas.addEventListener("pointerdown", (event) => {
+    suppressClick = false;
+    if (selectionBusy || (event.button !== 0 && !(event.button === 2 && event.shiftKey))) return;
+    const point = terrainCanvasPosition(event);
+    const index = terrainElementAt(point);
+    if (index < 0) return;
+    const element = terrainState.elements[index];
+    drag = { pointerId: event.pointerId, index, startX: event.clientX, startY: event.clientY,
+      moved: false, offsetX: element.x - point.x, offsetY: element.y - point.y };
+    terrainState.selected = index;
+    repaintTerrainMap();
+    renderTerrainElements();
+    updateTerrainElementEditor();
+    canvas.setPointerCapture(event.pointerId);
+    canvas.style.cursor = "grabbing";
+    event.preventDefault();
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!drag) {
+      canvas.style.cursor = terrainElementAt(terrainCanvasPosition(event)) >= 0 ? "grab" : "";
+      return;
+    }
+    if (drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 3) return;
+    drag.moved = true;
+    const point = terrainCanvasPosition(event);
+    moveTerrainElement(drag.index, point.x + drag.offsetX, point.y + drag.offsetY);
+    canvas.style.cursor = "grabbing";
+    event.preventDefault();
+  });
+  const release = (event) => {
+    if (drag?.pointerId !== event.pointerId) return;
+    suppressClick = event.type === "pointerup" && drag.moved;
+    drag = null;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    canvas.style.cursor = "";
+    event.preventDefault();
+  };
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("click", (event) => {
+    if (suppressClick) { suppressClick = false; return; }
+    if (event.button === 0 && !selectionBusy) addTerrainElement(terrainCanvasPosition(event));
+  });
+}
+
+function normalizeTerrainElement(source) {
+  const kind = ({ stepping_stones: "stones", high_wall: "wall" })[source.kind] ?? source.kind;
+  const safeKind = terrainDefaults[kind] ? kind : "platform";
+  const element = newTerrainElement(safeKind,
+    THREE.MathUtils.clamp(Number(source.x) || 0, -TERRAIN_AREA.x, TERRAIN_AREA.x),
+    THREE.MathUtils.clamp(Number(source.y) || 0, -TERRAIN_AREA.y, TERRAIN_AREA.y));
+  element.yaw = Number.isFinite(Number(source.yaw)) ? Number(source.yaw) : 0;
+  const legacyX = Math.max(.05, Number(source.scaleX ?? source.scale_x ?? 1) || 1);
+  const legacyY = Math.max(.05, Number(source.scaleY ?? source.scale_y ?? 1) || 1);
+  if (safeKind === "stairs") {
+    element.stepDepth *= legacyX;
+    element.stepWidth *= legacyY;
+    if (Number(source.height) > 0) element.stepHeight = Number(source.height) / 5;
+  } else {
+    element.length *= legacyX;
+    element.width *= legacyY;
+    if (Number(source.height) > 0) element.height = Number(source.height);
+    if (safeKind === "stones" && (source.scaleX !== undefined || source.scaleY !== undefined)) {
+      element.gapX *= legacyX;
+      element.gapY *= legacyY;
+      if (Number(source.height) > 0) element.height = Number(source.height) / 2;
+    }
+  }
+  for (const key of ["length", "width", "height", "stepDepth", "stepWidth", "stepHeight", "stepCount", "slope", "columns", "rows", "gapX", "gapY"]) {
+    if (source[key] !== undefined && Number.isFinite(Number(source[key]))) element[key] = Number(source[key]);
+  }
+  for (const key of ["length", "width", "height", "stepDepth", "stepWidth", "stepHeight"]) {
+    if (element[key] !== undefined) element[key] = THREE.MathUtils.clamp(element[key], .02, 10);
+  }
+  for (const [key, maximum] of [["stepCount", 20], ["columns", 8], ["rows", 8]]) {
+    if (element[key] !== undefined) element[key] = THREE.MathUtils.clamp(Math.round(element[key]), 1, maximum);
+  }
+  for (const key of ["gapX", "gapY"]) if (element[key] !== undefined) element[key] = THREE.MathUtils.clamp(element[key], 0, 5);
+  if (["aligned", "staggered", "diagonal"].includes(source.layout)) element.layout = source.layout;
+  if (safeKind === "ramp") element.slope = element.height / element.length * 100;
+  return element;
 }
 
 function importTerrainScene(file) {
@@ -1102,7 +1310,9 @@ function importTerrainScene(file) {
           const position = vector(geom.getAttribute("pos") ?? "", 3, [0, 0, 0]);
           const size = vector(geom.getAttribute("size") ?? "", 3, [.8, .8, .2]);
           const euler = vector(geom.getAttribute("euler") ?? "", 3, [0, 0, 0]);
-          return { kind: size[0] > 1.1 && size[1] < .3 ? "wall" : "platform", x: position[0], y: position[1], yaw: euler[1] || 0, height: size[2] * 2, scaleX: 1, scaleY: 1 };
+          return normalizeTerrainElement({ kind: size[0] > 1.1 && size[1] < .3 ? "wall" : "platform",
+            x: position[0], y: position[1], yaw: euler[2] || 0,
+            length: size[0] * 2, width: size[1] * 2, height: size[2] * 2 });
         });
         if (!imported.length) throw new Error("未找到可导入的 box 地形；高度场和外部 mesh 需先导出为 ArenaX JSON。");
         terrainState.elements = imported;
@@ -1112,18 +1322,14 @@ function importTerrainScene(file) {
         if (terrain.kind && ["flat", "slope", "stairs", "obstacle_mix"].includes(terrain.kind)) terrainState.kind = terrain.kind;
         terrainState.seed = Number(terrain.seed ?? terrainState.seed);
         terrainState.height = Number(terrain.height ?? terrain.obstacle_height ?? terrainState.height);
-        terrainState.elements = (scene.elements ?? []).map((element) => ({
-          kind: ["platform", "stairs", "ramp", "stepping_stones", "high_wall"].includes(element.kind)
-            ? ({ stepping_stones: "stones", high_wall: "wall" }[element.kind] ?? element.kind)
-            : "platform",
-          x: Number(element.x) || 0, y: Number(element.y) || 0, yaw: Number(element.yaw) || 0,
-          height: Number(element.height ?? element.size?.[2] ?? terrainState.height),
-          scaleX: Number(element.scaleX ?? element.scale_x ?? 1), scaleY: Number(element.scaleY ?? element.scale_y ?? 1),
+        terrainState.elements = (scene.elements ?? []).map((element) => normalizeTerrainElement({
+          ...element, height: element.height ?? element.size?.[2] ?? terrainState.height,
         }));
       }
       terrainState.selected = null;
       $("terrainKind").value = terrainState.kind;
       $("terrainSeed").value = terrainState.seed;
+      repaintTerrainEditor();
       setNotice("地形已导入预览；点击“应用到场景”后写入浏览器内 MuJoCo 物理模型。");
     } catch (error) { setNotice(error.message || String(error), true); }
   };
@@ -1131,7 +1337,7 @@ function importTerrainScene(file) {
 }
 
 function exportTerrainScene() {
-  const payload = { version: 1, name: "src-playground-terrain", terrain: { kind: terrainState.kind, seed: terrainState.seed, height: terrainState.height }, elements: terrainState.elements };
+  const payload = { version: 2, name: "src-playground-terrain", terrain: { kind: terrainState.kind, seed: terrainState.seed, height: terrainState.height }, elements: terrainState.elements };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -1221,6 +1427,39 @@ function installKeyboardControl() {
   });
 }
 
+let panelLayer = 3;
+function installDraggablePanel(id) {
+  const panel = $(id), handle = panel.querySelector(".panel-heading");
+  let drag = null;
+  panel.addEventListener("pointerdown", () => { panel.style.zIndex = String(++panelLayer); });
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest("button")) return;
+    const bounds = panel.getBoundingClientRect();
+    drag = { pointerId: event.pointerId, offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top };
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (drag?.pointerId !== event.pointerId) return;
+    panel.style.left = `${THREE.MathUtils.clamp(event.clientX - drag.offsetX, 0, Math.max(0, window.innerWidth - panel.offsetWidth))}px`;
+    panel.style.top = `${THREE.MathUtils.clamp(event.clientY - drag.offsetY, 0, Math.max(0, window.innerHeight - panel.offsetHeight))}px`;
+    panel.style.right = "auto";
+    event.preventDefault();
+  });
+  const release = (event) => {
+    if (drag?.pointerId !== event.pointerId) return;
+    drag = null;
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+  };
+  handle.addEventListener("pointerup", release);
+  handle.addEventListener("pointercancel", release);
+  window.addEventListener("resize", () => {
+    if (!panel.style.left || panel.hidden) return;
+    panel.style.left = `${THREE.MathUtils.clamp(parseFloat(panel.style.left), 0, Math.max(0, window.innerWidth - panel.offsetWidth))}px`;
+    panel.style.top = `${THREE.MathUtils.clamp(parseFloat(panel.style.top), 0, Math.max(0, window.innerHeight - panel.offsetHeight))}px`;
+  });
+}
+
 for (const [key, config] of Object.entries(robots)) $("robotModel").add(new Option(config.name, key));
 populatePolicies(activeRobotKey, activePolicyKey);
 $("robotModel").onchange = () => loadSelection($("robotModel").value).catch((error) => setNotice(error.message, true));
@@ -1259,31 +1498,51 @@ $("terrainToggle").onclick = () => {
 $("terrainClose").onclick = () => { $("terrainPanel").hidden = true; };
 $("terrainKind").onchange = (event) => { terrainState.kind = event.target.value; repaintTerrainEditor(); };
 $("terrainSeed").oninput = (event) => { terrainState.seed = Number(event.target.value) || 0; repaintTerrainEditor(); };
-function editSelectedTerrain(key, value) {
+function editSelectedTerrain(key, value, input) {
   const element = terrainState.elements[terrainState.selected];
-  if (!element || !Number.isFinite(value)) return;
+  if (!element || input.value.trim() === "" || !Number.isFinite(value) || !input.checkValidity()) {
+    updateTerrainElementEditor();
+    return;
+  }
   if (key === "x") value = THREE.MathUtils.clamp(value, -TERRAIN_AREA.x, TERRAIN_AREA.x);
   if (key === "y") value = THREE.MathUtils.clamp(value, -TERRAIN_AREA.y, TERRAIN_AREA.y);
   element[key] = value;
+  if (element.kind === "ramp") {
+    if (key === "slope" || key === "length") element.height = element.length * element.slope / 100;
+    else if (key === "height") element.slope = element.height / element.length * 100;
+  }
   repaintTerrainEditor();
 }
-$("elementX").onchange = (event) => editSelectedTerrain("x", Number(event.target.value));
-$("elementY").onchange = (event) => editSelectedTerrain("y", Number(event.target.value));
-$("elementHeight").onchange = (event) => editSelectedTerrain("height", Number(event.target.value));
-$("elementScaleX").onchange = (event) => editSelectedTerrain("scaleX", Number(event.target.value));
-$("elementScaleY").onchange = (event) => editSelectedTerrain("scaleY", Number(event.target.value));
-$("elementYaw").onchange = (event) => editSelectedTerrain("yaw", THREE.MathUtils.degToRad(Number(event.target.value)));
+const elementFields = {
+  elementX: "x", elementY: "y", elementLength: "length", elementWidth: "width", elementHeight: "height",
+  stepDepth: "stepDepth", stepWidth: "stepWidth", stepHeight: "stepHeight", stepCount: "stepCount",
+  elementSlope: "slope", stoneColumns: "columns", stoneRows: "rows", stoneGapX: "gapX", stoneGapY: "gapY",
+};
+for (const [id, key] of Object.entries(elementFields)) {
+  $(id).onchange = (event) => editSelectedTerrain(key, Number(event.target.value), event.target);
+}
+$("elementYaw").onchange = (event) => editSelectedTerrain("yaw", THREE.MathUtils.degToRad(Number(event.target.value)), event.target);
+$("stoneLayout").onchange = (event) => {
+  const element = terrainState.elements[terrainState.selected];
+  if (!element || element.kind !== "stones") return;
+  element.layout = event.target.value;
+  repaintTerrainEditor();
+};
 document.querySelectorAll("[data-terrain-tool]").forEach((button) => {
   button.onclick = () => {
     terrainState.tool = button.dataset.terrainTool;
     document.querySelectorAll("[data-terrain-tool]").forEach((item) => item.classList.toggle("active", item === button));
-    $("terrainHint").textContent = `当前工具：${terrainLabels[terrainState.tool]}。在场地中点击放置。`;
+    $("terrainHint").textContent = `当前工具：${terrainLabels[terrainState.tool]}。点击空白处放置，直接拖动已有标记调整位置。`;
   };
 });
-$("terrainMap").onclick = (event) => addTerrainElement(terrainCanvasPosition(event));
+installTerrainMapDrag();
 $("terrainClear").onclick = () => { terrainState.elements = []; terrainState.selected = null; repaintTerrainEditor(); };
 $("terrainApply").onclick = () => {
-  applyTerrain().catch((error) => { setStatus("地形同步失败", "error"); setNotice(error.message || String(error), true); });
+  applyTerrain().catch((error) => {
+    setStatus("地形同步失败", "error");
+    $("terrainHint").textContent = error.message || String(error);
+    setNotice(error.message || String(error), true);
+  });
 };
 $("terrainExport").onclick = exportTerrainScene;
 $("terrainImport").onchange = (event) => {
@@ -1305,6 +1564,7 @@ $("commandStop").onclick = () => {
 installJoystick("leftJoystick", "left");
 installJoystick("rightJoystick", "right");
 installKeyboardControl();
+for (const id of ["cmdPanel", "monitorPanel", "terrainPanel"]) installDraggablePanel(id);
 
 setBootStage("加载 MuJoCo 物理引擎…", 8);
 $("robotModel").disabled = $("policy").disabled = true;

@@ -37,7 +37,7 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
 .pill.error { background: #fbe9e9; border-color: #efc4c4; color: #8f3030; }
 
 
-.cmd-panel, .monitor-panel { background: #f9fbfdec; border: 1px solid #cbd6df; border-radius: 8px; box-shadow: 0 8px 28px #22354422; display: grid; gap: 9px; padding: 11px; position: absolute; top: 55px; z-index: 3; backdrop-filter: blur(12px); }
+.cmd-panel, .monitor-panel { background: #f9fbfdec; border: 1px solid #cbd6df; border-radius: 8px; box-shadow: 0 8px 28px #22354422; display: grid; gap: 9px; max-height: calc(100dvh - 68px); overflow: auto; padding: 11px; position: absolute; top: 55px; z-index: 3; backdrop-filter: blur(12px); }
 .cmd-panel { left: 14px; width: min(350px, calc(100vw - 28px)); }
 .monitor-panel { left: 378px; width: min(330px, calc(100vw - 392px)); }
 .cmd-panel[hidden],
@@ -74,9 +74,10 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
 .joystick-knob { background: #185a91cf; border: 2px solid #ffffffcc; border-radius: 50%; box-shadow: 0 3px 9px #183e522e; height: 44px; left: 50%; position: absolute; top: 50%; transform: translate(-50%, -50%); width: 44px; }
 .virtual-joystick output { color: #496978; font-size: .58rem; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #fff; }
 
-.terrain-panel { background: #f9fbfdec; border-left: 1px solid #cbd6df; box-shadow: -10px 0 32px #2235441f; display: flex; flex-direction: column; gap: 10px; max-width: min(390px, 100vw); overflow: auto; padding: 14px; position: absolute; right: 0; top: 43px; bottom: 0; width: 390px; z-index: 3; backdrop-filter: blur(12px); }
+.terrain-panel { background: #f9fbfdec; border: 1px solid #cbd6df; border-radius: 8px; box-shadow: -10px 0 32px #2235441f; display: flex; flex-direction: column; gap: 10px; max-height: calc(100dvh - 68px); max-width: min(390px, 100vw); overflow: auto; padding: 14px; position: absolute; right: 14px; top: 55px; width: 390px; z-index: 3; backdrop-filter: blur(12px); }
 .terrain-panel[hidden] { display: none; }
-.panel-heading { align-items: start; display: flex; justify-content: space-between; }
+.panel-heading { align-items: start; cursor: grab; display: flex; justify-content: space-between; touch-action: none; user-select: none; }
+.panel-heading:active { cursor: grabbing; }
 .panel-heading strong { font-size: .88rem; }
 .panel-kicker { color: #185a91; font-size: .58rem; font-weight: 750; letter-spacing: .12em; margin: 0 0 .2rem; }
 .panel-copy, .terrain-hint { color: #687984; font-size: .68rem; line-height: 1.45; margin: 0; }
@@ -90,7 +91,7 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
 .terrain-tools { display: flex; flex-wrap: wrap; gap: 5px; }
 .terrain-tools button, .terrain-actions button, .file-button { font-size: .65rem; padding: .32rem .46rem; }
 .terrain-tools button.active { background: #e6f0f8; border-color: #7ca4c3; color: #145486; }
-#terrainMap { background: #eaf0eb; border: 1px solid #c8d3db; border-radius: 7px; cursor: crosshair; height: auto; max-width: 100%; width: 100%; }
+#terrainMap { background: #eaf0eb; border: 1px solid #c8d3db; border-radius: 7px; cursor: crosshair; height: auto; max-width: 100%; touch-action: none; width: 100%; }
 .terrain-elements { display: grid; gap: 4px; max-height: 108px; overflow: auto; }
 .terrain-element { align-items: center; background: #ffffffbd; border: 1px solid #d6dfe5; border-radius: 5px; display: flex; font-size: .65rem; justify-content: space-between; padding: .31rem .42rem; }
 .terrain-element.selected { border-color: #5c93bb; color: #155583; }
@@ -99,7 +100,9 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
 .terrain-element-editor[hidden] { display: none; }
 .terrain-element-editor strong { font-size: .67rem; grid-column: span 2; }
 .terrain-element-editor label { color: #52636e; display: grid; font-size: .6rem; gap: 3px; }
+.terrain-element-editor label[hidden] { display: none; }
 .terrain-element-editor input { background: #fff; border: 1px solid #c7d0d8; border-radius: 4px; color: #273640; min-width: 0; padding: .27rem; }
+.terrain-element-editor select { background: #fff; border: 1px solid #c7d0d8; border-radius: 4px; color: #273640; min-width: 0; padding: .27rem; }
 .terrain-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .file-button { background: #f8fafbd9; border: 1px solid #c7d0d8; border-radius: 6px; color: #24313b; cursor: pointer; }
 .file-button input { display: none; }
@@ -120,7 +123,8 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
   .policy-context { flex: 1; }
   .top-actions { flex-wrap: wrap; margin-left: 0; order: 3; width: 100%; }
   .command-output { margin-left: auto; }
-  .monitor-panel { left: 14px; top: 315px; width: min(330px, calc(100vw - 28px)); }
+  .monitor-panel { left: 14px; top: 110px; width: min(330px, calc(100vw - 28px)); }
+  .cmd-panel, .monitor-panel, .terrain-panel { max-height: calc(100dvh - 120px); }
 }
 
 @media (max-width: 560px) {
@@ -131,7 +135,8 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
   .github-mark { height: .7rem; width: .7rem; }
   .top-actions select { max-width: 120px; }
   .cmd-panel { left: 10px; top: 110px; width: calc(100vw - 20px); }
-  .monitor-panel { left: 10px; top: 315px; width: calc(100vw - 20px); }
+  .monitor-panel { left: 10px; top: 110px; width: calc(100vw - 20px); }
+  .terrain-panel { right: 10px; top: 110px; width: calc(100vw - 20px); }
   .virtual-joystick { bottom: 12px; }
   .joystick-left { left: 10px; }
   .joystick-right { right: 10px; }

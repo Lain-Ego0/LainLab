@@ -93,6 +93,16 @@ to scene** recompiles only the active MuJoCo terrain geometry set; the robot
 mesh assets remain cached in the browser VFS so collision topology is current
 without reloading those assets.
 
+The CMD, telemetry, and terrain panels can be moved by dragging their titles.
+Select a placed obstacle on the terrain map to enter dimensions in metres.
+Stairs use per-step depth, width, height, and count. A ramp's slope percentage
+recalculates its height, while editing its height recalculates the slope.
+Stepping stones use one stone's dimensions, row and column counts, spacing,
+and aligned, staggered, or diagonal placement. Edits preview immediately;
+**Apply to scene** updates the physics collision shapes.
+Drag an existing obstacle directly in the terrain map to change its position
+before applying. Shift plus right drag also works in the map.
+
 **Export JSON** creates a portable playground scene draft for future online
 publishing. **Import** accepts that JSON and ArenaX-style `scene.json` files;
 it also imports simple MuJoCo XML files containing box geoms. Heightfields and
