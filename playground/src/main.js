@@ -9,6 +9,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { g1JointNames, g1Policies, createG1State, g1Observation, g1Targets } from "./g1.js";
+import { createRecoveryDecision, measureRecoverySupport, recoveryTiltSpeed, stepRecoveryDecision } from "./go2-recovery.js";
 
 // Keep ONNX Runtime's sidecar binary out of Vite's dependency-cache URL too.
 // The demo is intentionally single-threaded so it remains usable without
@@ -134,10 +135,15 @@ const simulation = {
 const MUJOCO_TIMESTEP = 0.002;
 const POLICY_PHYSICS_STEPS = 10;
 const POLICY_DT = MUJOCO_TIMESTEP * POLICY_PHYSICS_STEPS;
+const recoveryPose = [0, 1.5, -2.4, 0, 1.5, -2.4, 0, 1.5, -2.4, 0, 1.5, -2.4];
+const recovery = { ...createRecoveryDecision(), action: new Float32Array(12) };
+const recoveryTransitions = [];
+let recoveryFootGeomIds = new Set(), recoveryBaseBodyId = -1;
 const terrainState = { kind: "flat", seed: 7, height: 0.28, tool: "platform", elements: [], selected: null };
+let appliedTerrain = [];
 const TERRAIN_AREA = { x: 10, y: 8 };
 const TERRAIN_SLOT_COUNT = 96;
-let mujoco, model, data, policySession, activePolicy, jointAddresses, actuatorAddresses, baseSceneXml, robotVfs, terrainSlotIds, terrainSlotSet;
+let mujoco, model, data, policySession, recoverySession, activePolicy, jointAddresses, actuatorAddresses, baseSceneXml, robotVfs, terrainSlotIds, terrainSlotSet;
 let physicsStepsPerPolicy = POLICY_PHYSICS_STEPS;
 let actualPolicyDt = POLICY_DT;
 const controllerState = {
@@ -353,11 +359,15 @@ function createMujocoModel(xml, terrainCount, vfs = robotVfs, config = robots[ac
     const joints = config.jointNames.map((name) => ({ qpos: nextModel.jnt(name).qposadr, dof: nextModel.jnt(name).dofadr }));
     const actuators = config.actuatorNames.map((name) => nextModel.actuator(name).id);
     const slots = Array.from({ length: terrainCount }, (_, i) => nextModel.geom(`playground_terrain_${i}`).id);
+    const recoveryFeet = config === robots.go2 ? new Set(["FL", "FR", "RL", "RR"].map((name) => nextModel.geom(name).id)) : new Set();
+    const recoveryBody = config === robots.go2 ? nextModel.body("base_link").id : -1;
     data?.delete?.();
     model?.delete?.();
     model = nextModel; data = nextData;
     jointAddresses = joints; actuatorAddresses = actuators;
     terrainSlotIds = slots; terrainSlotSet = new Set(slots);
+    recoveryFootGeomIds = recoveryFeet; recoveryBaseBodyId = recoveryBody;
+    appliedTerrain = terrainBoxes().slice(1);
     physicsStepsPerPolicy = ratio;
     actualPolicyDt = ratio * model.opt.timestep;
   } catch (error) {
@@ -591,7 +601,7 @@ async function loadSelection(robotKey, policyKey = robots[robotKey].defaultPolic
   setSelectionBusy(true);
   await stopSimulation();
   const nextPolicy = policies[policyKey];
-  let session, visual, vfs;
+  let session, newRecoverySession, visual, vfs;
   try {
     if (!nextPolicy || (nextPolicy.robot || "go2") !== robotKey) throw new Error("机器人与策略不匹配");
     setStatus(`正在加载 ${robots[robotKey].name}…`);
@@ -600,6 +610,12 @@ async function loadSelection(robotKey, policyKey = robots[robotKey].defaultPolic
     const metadata = session.inputMetadata[0];
     if (metadata.shape.at(-1) !== nextPolicy.inputSize || session.outputMetadata[0].shape.at(-1) !== robots[robotKey].jointNames.length) {
       throw new Error("策略输入输出维度与机器人配置不匹配");
+    }
+    if (robotKey === "go2" && !recoverySession) {
+      newRecoverySession = await ort.InferenceSession.create(publicAsset("/policies/go2-recovery.onnx"), { executionProviders: ["wasm"] });
+      if (newRecoverySession.inputMetadata[0].shape.at(-1) !== 45 || newRecoverySession.outputMetadata[0].shape.at(-1) !== 12) {
+        throw new Error("起身策略输入输出维度不匹配");
+      }
     }
     if (changeRobot) {
       const asset = await robotPackage(robotKey);
@@ -619,6 +635,12 @@ async function loadSelection(robotKey, policyKey = robots[robotKey].defaultPolic
     }
     const previous = policySession;
     policySession = session; session = null;
+    if (newRecoverySession) { recoverySession = newRecoverySession; newRecoverySession = null; }
+    if (robotKey === "g1" && recoverySession) {
+      const oldRecoverySession = recoverySession;
+      recoverySession = null;
+      await oldRecoverySession.release();
+    }
     activeRobotKey = robotKey; activePolicyKey = policyKey;
     activePolicy = nextPolicy;
     simulation.action = new Float32Array(robots[robotKey].jointNames.length);
@@ -634,6 +656,7 @@ async function loadSelection(robotKey, policyKey = robots[robotKey].defaultPolic
     if (previous) await previous.release();
   } catch (error) {
     if (session) await session.release();
+    if (newRecoverySession) await newRecoverySession.release();
     if (visual) disposeRobot(visual.group);
     vfs?.delete?.();
     setStatus(`加载失败：${error.message || error}`, "error");
@@ -660,6 +683,10 @@ function reset() {
   simulation.action.fill(0);
   simulation.actionHistory = [];
   simulation.history = [];
+  Object.assign(recovery, createRecoveryDecision());
+  recoveryTransitions.length = 0;
+  recovery.action.fill(0);
+  if (activeRobotKey === "go2") setStatus("浏览器物理引擎已就绪", "ready");
   g1State = createG1State();
   robotDrag = null;
   dragArrow.visible = false;
@@ -697,6 +724,72 @@ function observation() {
   jointAddresses.forEach((address) => values.push(data.qvel[address.dof] * 0.05));
   values.push(...simulation.action);
   return new Float32Array(values);
+}
+
+function recoveryObservation() {
+  const inverse = bodyQuaternion().invert();
+  const gravity = new THREE.Vector3(0, 0, -1).applyQuaternion(inverse);
+  const values = [data.qvel[3] * .25, data.qvel[4] * .25, data.qvel[5] * .25,
+    gravity.x, gravity.y, gravity.z,
+    simulation.command[0] * 2, simulation.command[1] * 2, simulation.command[2] * .25];
+  jointAddresses.forEach((address, index) => values.push(data.qpos[address.qpos] - recoveryPose[index]));
+  jointAddresses.forEach((address) => values.push(data.qvel[address.dof] * .05));
+  values.push(...recovery.action);
+  return new Float32Array(values);
+}
+
+function terrainHeightAt(x, y) {
+  let height = 0;
+  // Use the terrain currently applied to MuJoCo, rather than unsaved editor values.
+  for (const definition of appliedTerrain) {
+    const dx = x - definition.x, dy = y - definition.y;
+    const angle = definition.yaw || 0;
+    const localX = dx * Math.cos(angle) + dy * Math.sin(angle);
+    const localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
+    if (Math.abs(localX) > definition.sx || Math.abs(localY) > definition.sy) continue;
+    const top = definition.type === "ramp"
+      ? definition.z - definition.sz + (localX / definition.sx + 1) * definition.sz
+      : definition.z + definition.sz;
+    height = Math.max(height, top);
+  }
+  return height;
+}
+
+function recoverySensors() {
+  const gravity = new THREE.Vector3(0, 0, -1).applyQuaternion(bodyQuaternion().invert());
+  const support = measureRecoverySupport({
+    baseZ: data.qpos[2], groundZ: terrainHeightAt(data.qpos[0], data.qpos[1]),
+    footGeomIds: recoveryFootGeomIds, baseBodyId: recoveryBaseBodyId,
+    terrainGeomIds: terrainSlotSet, geomBodyIds: model.geom_bodyid,
+    contacts: Array.from({ length: data.ncon }, (_, index) => data.contact.get(index)),
+  });
+  return { ...support, up: -gravity.z,
+    tiltSpeed: recoveryTiltSpeed([data.qvel[3], data.qvel[4], data.qvel[5]], gravity.toArray()),
+    verticalSpeed: data.qvel[2], intentionalStand: activePolicy.mode === "stand" };
+}
+
+function updateRecoveryState() {
+  if (activeRobotKey !== "go2" || !recoverySession) return;
+  const sensors = recoverySensors();
+  const transition = stepRecoveryDecision(recovery, sensors, actualPolicyDt);
+  if (import.meta.env.DEV && transition) {
+    recoveryTransitions.push({ event: transition, time: data.time, sensors });
+    if (recoveryTransitions.length > 32) recoveryTransitions.shift();
+  }
+  if (transition === "recover") {
+    recovery.action.fill(0);
+  }
+  if (transition === "recover" || transition === "retry") {
+    setStatus(`跌倒，正在运行起身策略 · 原策略：${activePolicy.name}`, "ready");
+  } else if (transition === "stabilize") {
+    setStatus(`已扶正，正在确认站稳 · 原策略：${activePolicy.name}`, "ready");
+  } else if (transition === "resume") {
+    recovery.action.fill(0);
+    simulation.action.fill(0);
+    simulation.history = [];
+    simulation.actionHistory = [];
+    setStatus(`已起身，继续 ${activePolicy.name}`, "ready");
+  }
 }
 
 function arenaHistoryObservation() {
@@ -747,22 +840,27 @@ function gaitObservation() {
 }
 
 async function policyStep() {
-  const obs = observation();
-  if (obs.length !== activePolicy.inputSize) throw new Error(`策略观测维度不匹配：${obs.length} / ${activePolicy.inputSize}`);
-  const inputName = policySession.inputNames[0];
-  const outputName = policySession.outputNames[0];
+  updateRecoveryState();
+  const recovering = recovery.active;
+  const session = recovering ? recoverySession : policySession;
+  const targetAction = recovering ? recovery.action : simulation.action;
+  const obs = recovering ? recoveryObservation() : observation();
+  const expectedSize = recovering ? 45 : activePolicy.inputSize;
+  if (obs.length !== expectedSize) throw new Error(`策略观测维度不匹配：${obs.length} / ${expectedSize}`);
+  const inputName = session.inputNames[0];
+  const outputName = session.outputNames[0];
   const feeds = { [inputName]: new ort.Tensor("float32", obs, [1, obs.length]) };
   let output;
   try {
-    output = await policySession.run(feeds);
+    output = await session.run(feeds);
     const actions = output[outputName].data;
-    if (actions.length !== simulation.action.length || !actions.every(Number.isFinite)) throw new Error("策略输出无效");
-    simulation.action.set(activePolicy.robot === "g1" ? Float32Array.from(actions, (v) => THREE.MathUtils.clamp(v, -100, 100)) : actions);
+    if (actions.length !== targetAction.length || !actions.every(Number.isFinite)) throw new Error("策略输出无效");
+    targetAction.set(activePolicy.robot === "g1" ? Float32Array.from(actions, (v) => THREE.MathUtils.clamp(v, -100, 100)) : actions);
   } finally {
     Object.values(feeds).forEach((tensor) => tensor.dispose());
     Object.values(output || {}).forEach((tensor) => tensor.dispose());
   }
-  simulation.actionHistory.push(Array.from(simulation.action));
+  simulation.actionHistory.push(Array.from(targetAction));
   if (simulation.actionHistory.length > 90) simulation.actionHistory.shift();
 }
 
@@ -777,9 +875,11 @@ function applyControl() {
     return;
   }
   jointAddresses.forEach((address, index) => {
-    const target = activePolicy.defaultPose[index] + 0.25 * simulation.action[index];
+    const target = (recovery.active ? recoveryPose[index] : activePolicy.defaultPose[index])
+      + 0.25 * (recovery.active ? recovery.action[index] : simulation.action[index]);
     const limit = index % 3 === 2 ? 31.995 : 21.33;
-    const torque = THREE.MathUtils.clamp(40 * (target - data.qpos[address.qpos]) - data.qvel[address.dof], -limit, limit);
+    const kp = recovery.active ? 30 : 40, kd = recovery.active ? .8 : 1;
+    const torque = THREE.MathUtils.clamp(kp * (target - data.qpos[address.qpos]) - kd * data.qvel[address.dof], -limit, limit);
     data.ctrl[actuatorAddresses[index]] = torque;
   });
 }
@@ -1578,6 +1678,16 @@ initializeMujoco()
     $("monitorToggle").disabled = false;
     $("terrainToggle").disabled = false;
     installRobotDrag();
+    if (import.meta.env.DEV) window.__playgroundDebug = {
+      setBasePose(z, quaternion) {
+        data.qpos[2] = z;
+        data.qpos.set(quaternion, 3);
+        data.qvel.fill(0);
+        mujoco.mj_forward(model, data);
+      },
+      recoveryState: () => ({ active: recovery.active, phase: recovery.phase, uprightTime: recovery.uprightTime,
+        action: Array.from(recovery.action), selected: activePolicyKey, sensors: recoverySensors(), transitions: recoveryTransitions }),
+    };
     setBootStage("场景已就绪", 100);
     tick();
     requestAnimationFrame(revealScene);
