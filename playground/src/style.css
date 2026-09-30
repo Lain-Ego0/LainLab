@@ -118,7 +118,7 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
 @media (max-width: 890px) {
   .top-bar { flex-wrap: wrap; gap: 5px 8px; min-height: 48px; padding: 5px 10px; }
   .policy-context { flex: 1; }
-  .top-actions { margin-left: 0; order: 3; }
+  .top-actions { flex-wrap: wrap; margin-left: 0; order: 3; width: 100%; }
   .command-output { margin-left: auto; }
   .monitor-panel { left: 14px; top: 315px; width: min(330px, calc(100vw - 28px)); }
 }
@@ -130,7 +130,7 @@ button.primary:hover:not(:disabled) { background: #104b7b; }
   .project-link { font-size: .57rem; gap: .2rem; padding: .22rem .42rem; }
   .github-mark { height: .7rem; width: .7rem; }
   .top-actions select { max-width: 120px; }
-  .cmd-panel { left: 10px; top: 58px; width: calc(100vw - 20px); }
+  .cmd-panel { left: 10px; top: 110px; width: calc(100vw - 20px); }
   .monitor-panel { left: 10px; top: 315px; width: calc(100vw - 20px); }
   .virtual-joystick { bottom: 12px; }
   .joystick-left { left: 10px; }

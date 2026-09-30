@@ -7,6 +7,8 @@ import ortMjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { g1JointNames, g1Policies, createG1State, g1Observation, g1Targets } from "./g1.js";
 
 // Keep ONNX Runtime's sidecar binary out of Vite's dependency-cache URL too.
 // The demo is intentionally single-threaded so it remains usable without
@@ -19,6 +21,7 @@ ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
 
 const policies = {
+  ...g1Policies,
   handstand: {
     name: "前倒立",
     file: "/policies/go2-handstand.onnx",
@@ -95,22 +98,26 @@ const policies = {
   },
 };
 
-const jointNames = [
+const go2JointNames = [
   "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
   "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
   "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
   "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
 ];
-const actuatorNames = [
+const go2ActuatorNames = [
   "FL_hip", "FL_thigh", "FL_calf", "FR_hip", "FR_thigh", "FR_calf",
   "RL_hip", "RL_thigh", "RL_calf", "RR_hip", "RR_thigh", "RR_calf",
 ];
-const meshFiles = [
-  "base_0.obj", "base_1.obj", "base_2.obj", "base_3.obj", "base_4.obj",
-  "hip_0.obj", "hip_1.obj", "thigh_0.obj", "thigh_1.obj", "thigh_mirror_0.obj",
-  "thigh_mirror_1.obj", "calf_0.obj", "calf_1.obj", "calf_mirror_0.obj",
-  "calf_mirror_1.obj", "foot.obj",
-];
+const robots = {
+  go2: { name: "Unitree Go2", scene: "robot/scene_go2.xml", jointNames: go2JointNames, actuatorNames: go2ActuatorNames,
+    height: .42, camera: [1.6, -2.7, 1.25], target: .38, defaultPolicy: "handstand" },
+  g1: { name: "Unitree G1 · 29 DOF", scene: "robot/g1/scene.xml", jointNames: g1JointNames,
+    actuatorNames: g1JointNames.map((name) => name.replace(/_joint$/, "")),
+    height: .793, camera: [2.4, -3.6, 1.8], target: .8, defaultPolicy: "g1Amp" },
+};
+let activeRobotKey = "go2", activePolicyKey = "handstand", selectionBusy = false;
+let g1State = createG1State();
+const robotCache = new Map();
 
 const $ = (id) => document.getElementById(id);
 const publicAsset = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
@@ -130,7 +137,7 @@ const POLICY_DT = MUJOCO_TIMESTEP * POLICY_PHYSICS_STEPS;
 const terrainState = { kind: "flat", seed: 7, height: 0.28, tool: "platform", elements: [], selected: null };
 const TERRAIN_AREA = { x: 10, y: 8 };
 const TERRAIN_SLOT_COUNT = 96;
-let mujoco, model, data, policySession, activePolicy, jointAddresses, actuatorAddresses, baseSceneXml, robotAssets, robotVfs, terrainSlotIds, terrainSlotSet;
+let mujoco, model, data, policySession, activePolicy, jointAddresses, actuatorAddresses, baseSceneXml, robotVfs, terrainSlotIds, terrainSlotSet;
 let physicsStepsPerPolicy = POLICY_PHYSICS_STEPS;
 let actualPolicyDt = POLICY_DT;
 const controllerState = {
@@ -242,80 +249,120 @@ function localTransform(node, element) {
   node.quaternion.set(quat[1], quat[2], quat[3], quat[0]);
 }
 
-async function buildRobot() {
-  const [xml, ...objects] = await Promise.all([
-    fetch(publicAsset("robot/scene_go2.xml")).then((response) => response.text()),
-    ...meshFiles.map((file) => new OBJLoader().loadAsync(publicAsset(`robot/assets/${file}`))),
-  ]);
-  const meshes = new Map(meshFiles.map((file, index) => [file.replace(".obj", ""), objects[index]]));
-  const document = new DOMParser().parseFromString(xml, "text/xml");
+async function fetchAsset(path, format = "text") {
+  const response = await fetch(publicAsset(path));
+  if (!response.ok) throw new Error(`资源加载失败 (${response.status}): ${path}`);
+  if (response.headers.get("content-type")?.includes("text/html")) {
+    throw new Error(`资源 ${path} 返回了网页而非文件，请刷新页面或重启试玩服务`);
+  }
+  return response[format]();
+}
+
+async function robotPackage(key) {
+  if (!robotCache.has(key)) {
+    const task = (async () => {
+      const scenePath = robots[key].scene;
+      const xml = await fetchAsset(scenePath);
+      const document = new DOMParser().parseFromString(xml, "text/xml");
+      if (document.querySelector("parsererror") || document.documentElement.tagName !== "mujoco") {
+        throw new Error(`机器人场景 XML 无效：${scenePath}`);
+      }
+      const directory = scenePath.slice(0, scenePath.lastIndexOf("/") + 1);
+      const meshDir = document.querySelector("compiler")?.getAttribute("meshdir") || "";
+      const meshes = await Promise.all([...document.querySelectorAll("asset > mesh")].map(async (element) => {
+        const file = [meshDir === "." ? "" : meshDir, attribute(element, "file")].filter(Boolean).join("/");
+        return { name: attribute(element, "name", file.split("/").at(-1).replace(/\.[^.]+$/, "")), file, scale: vector(attribute(element, "scale"), 3, [1, 1, 1]),
+          bytes: await fetchAsset(directory + file, "arrayBuffer") };
+      }));
+      return { xml, meshes };
+    })();
+    robotCache.set(key, task);
+    task.catch(() => robotCache.delete(key));
+  }
+  return robotCache.get(key);
+}
+
+function disposeRobot(group) {
+  const geometries = new Set(), materials = new Set();
+  group.traverse((node) => { if (node.isMesh) { geometries.add(node.geometry); materials.add(node.material); } });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
+  group.clear();
+}
+
+function buildRobot(asset) {
+  const meshes = new Map(asset.meshes.map(({ name, file, bytes, scale }) => {
+    const object = /\.stl$/i.test(file) ? new THREE.Mesh(new STLLoader().parse(bytes))
+      : new OBJLoader().parse(new TextDecoder().decode(bytes));
+    object.scale.fromArray(scale);
+    return [name, object];
+  }));
+  const document = new DOMParser().parseFromString(asset.xml, "text/xml");
   const materialColors = { metal: 0xe0e8e8, black: 0x1c242c, white: 0xf2f4f5, gray: 0xabb1c5 };
-  robot.clear();
-  bodyNodes.clear();
+  const group = new THREE.Group(), nodes = new Map();
   function visit(body) {
     const name = attribute(body, "name");
     if (!name) return;
-    const group = new THREE.Group();
-    bodyNodes.set(name, group);
-    robot.add(group);
+    const node = new THREE.Group();
+    nodes.set(name, node);
+    group.add(node);
     for (const geom of body.children) {
       if (geom.tagName !== "geom" || !geom.hasAttribute("mesh")) continue;
+      // G1 carries separate visual and collision meshes at identical transforms.
+      if (geom.getAttribute("contype") !== "0" && [...body.children].some((other) =>
+        other !== geom && other.tagName === "geom" && other.getAttribute("mesh") === geom.getAttribute("mesh")
+        && other.getAttribute("contype") === "0")) continue;
       const source = meshes.get(attribute(geom, "mesh"));
-      if (!source) continue;
+      if (!source) throw new Error(`缺少机器人网格：${attribute(geom, "mesh")}`);
       const mesh = source.clone(true);
+      const rgba = vector(attribute(geom, "rgba"), 4, null);
       mesh.traverse((child) => {
         if (!child.isMesh) return;
         child.material = new THREE.MeshStandardMaterial({
-          color: materialColors[attribute(geom, "material")] ?? 0xb8c0c8,
-          roughness: 0.62,
-          metalness: 0.12,
+          color: rgba ? new THREE.Color(rgba[0], rgba[1], rgba[2]) : materialColors[attribute(geom, "material")] ?? 0xb8c0c8,
+          roughness: .62, metalness: .12,
         });
         child.castShadow = true;
       });
       localTransform(mesh, geom);
-      group.add(mesh);
+      node.add(mesh);
     }
     for (const child of body.children) if (child.tagName === "body") visit(child);
   }
   for (const body of document.querySelectorAll("worldbody > body")) visit(body);
+  // The clones own the shared geometries; loader-created materials are unused.
+  meshes.forEach((object) => object.traverse((child) => {
+    if (child.isMesh) for (const material of [child.material].flat()) material.dispose();
+  }));
+  return { group, nodes };
 }
 
 async function initializeMujoco() {
-  // Vite pre-bundles JS dependencies during development, but the Emscripten
-  // loader resolves its sidecar WASM relative to that transient cache path.
-  // Giving it Vite's emitted URL makes dev and production use the same binary.
-  mujoco = await loadMujoco({
-    locateFile: (file) => (file === "mujoco.wasm" ? mujocoWasmUrl : file),
-  });
-  const [xml, binaries] = await Promise.all([
-    fetch(publicAsset("robot/scene_go2.xml")).then((response) => response.text()),
-    Promise.all(meshFiles.map(async (file) => [file, new Uint8Array(await (await fetch(publicAsset(`robot/assets/${file}`))).arrayBuffer())])),
-  ]);
-  baseSceneXml = xml;
-  robotAssets = binaries;
-  robotVfs = new mujoco.MjVFS();
-  for (const [file, buffer] of robotAssets) robotVfs.addBuffer(`assets/${file}`, buffer);
-  createMujocoModel(terrainXml(), terrainBoxes().length);
+  mujoco = await loadMujoco({ locateFile: (file) => (file === "mujoco.wasm" ? mujocoWasmUrl : file) });
 }
 
-function createMujocoModel(xml, terrainCount) {
-  data?.delete?.();
-  model?.delete?.();
-  model = mujoco.MjModel.from_xml_string(xml, robotVfs);
-  data = new mujoco.MjData(model);
-  const policyStepRatio = POLICY_DT / model.opt.timestep;
-  if (Math.abs(model.opt.timestep - MUJOCO_TIMESTEP) > 1e-9 || !Number.isInteger(policyStepRatio) || policyStepRatio !== POLICY_PHYSICS_STEPS) {
-    throw new Error(`MuJoCo timestep 必须为 ${MUJOCO_TIMESTEP}s，且策略周期必须由 ${POLICY_PHYSICS_STEPS} 个物理步组成。`);
+function createMujocoModel(xml, terrainCount, vfs = robotVfs, config = robots[activeRobotKey]) {
+  const nextModel = mujoco.MjModel.from_xml_string(xml, vfs);
+  let nextData;
+  try {
+    nextData = new mujoco.MjData(nextModel);
+    const ratio = POLICY_DT / nextModel.opt.timestep;
+    if (Math.abs(nextModel.opt.timestep - MUJOCO_TIMESTEP) > 1e-9 || !Number.isInteger(ratio) || ratio !== POLICY_PHYSICS_STEPS) {
+      throw new Error(`MuJoCo timestep 必须为 ${MUJOCO_TIMESTEP}s，策略周期必须由 ${POLICY_PHYSICS_STEPS} 个物理步组成。`);
+    }
+    const joints = config.jointNames.map((name) => ({ qpos: nextModel.jnt(name).qposadr, dof: nextModel.jnt(name).dofadr }));
+    const actuators = config.actuatorNames.map((name) => nextModel.actuator(name).id);
+    const slots = Array.from({ length: terrainCount }, (_, i) => nextModel.geom(`playground_terrain_${i}`).id);
+    data?.delete?.();
+    model?.delete?.();
+    model = nextModel; data = nextData;
+    jointAddresses = joints; actuatorAddresses = actuators;
+    terrainSlotIds = slots; terrainSlotSet = new Set(slots);
+    physicsStepsPerPolicy = ratio;
+    actualPolicyDt = ratio * model.opt.timestep;
+  } catch (error) {
+    nextData?.delete?.(); nextModel.delete(); throw error;
   }
-  physicsStepsPerPolicy = policyStepRatio;
-  actualPolicyDt = physicsStepsPerPolicy * model.opt.timestep;
-  jointAddresses = jointNames.map((name) => ({
-    qpos: model.jnt(name).qposadr,
-    dof: model.jnt(name).dofadr,
-  }));
-  actuatorAddresses = actuatorNames.map((name) => model.actuator(name).id);
-  terrainSlotIds = Array.from({ length: terrainCount }, (_, index) => model.geom(`playground_terrain_${index}`).id);
-  terrainSlotSet = new Set(terrainSlotIds);
 }
 
 function seededRandom(seed) {
@@ -395,8 +442,8 @@ function renderTerrain() {
   for (const element of terrainState.elements) for (const definition of elementBoxes(element)) addVisualBox(definition, 0x6f94ae);
 }
 
-function terrainXml() {
-  const document = new DOMParser().parseFromString(baseSceneXml, "text/xml");
+function terrainXml(xml = baseSceneXml) {
+  const document = new DOMParser().parseFromString(xml, "text/xml");
   const worldbodies = document.querySelectorAll("worldbody");
   const worldbody = worldbodies[worldbodies.length - 1];
   // scene_go2.xml already contains an infinite plane. Keep one explicit box
@@ -436,15 +483,17 @@ function terrainXml() {
 }
 
 async function applyTerrain() {
-  if (!mujoco || !baseSceneXml) return;
+  if (!mujoco || !baseSceneXml || selectionBusy) return;
+  setSelectionBusy(true);
+  await stopSimulation();
   simulation.running = false;
   $("start").textContent = "开始";
   const definitions = terrainBoxes();
-  if (definitions.length > TERRAIN_SLOT_COUNT) throw new Error(`地形最多支持 ${TERRAIN_SLOT_COUNT} 个碰撞组件。`);
   $("terrainApply").disabled = true;
   setStatus("正在同步地形碰撞…");
   setNotice("正在同步地形碰撞…");
   try {
+    if (definitions.length > TERRAIN_SLOT_COUNT) throw new Error(`地形最多支持 ${TERRAIN_SLOT_COUNT} 个碰撞组件。`);
     // Geometry topology is part of MuJoCo's collision broad-phase. Compile
     // only active boxes, while keeping robot mesh assets cached in memory.
     await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -454,24 +503,86 @@ async function applyTerrain() {
     setStatus("浏览器物理引擎已就绪", "ready");
     setNotice(`已应用${terrainState.kind === "flat" ? "平地" : "自定义"}地形；物理碰撞已同步。`);
   } finally {
-    $("terrainApply").disabled = false;
+    setSelectionBusy(false);
   }
 }
 
-async function loadPolicy(key) {
-  activePolicy = policies[key];
+function setSelectionBusy(busy) {
+  selectionBusy = busy;
+  for (const id of ["robotModel", "policy", "start", "reset", "terrainApply"]) $(id).disabled = busy;
+}
+
+async function stopSimulation() {
   simulation.running = false;
   $("start").textContent = "开始";
-  $("policyName").textContent = activePolicy.name;
-  $("policyMeta").textContent = `${activePolicy.inputSize} 维策略输入 · 12 个关节动作`;
-  simulation.command.fill(0);
-  configureCommandControls();
-  recomputeCommand();
-  updateControls();
-  setNotice(`正在加载「${activePolicy.name}」ONNX 策略…`);
-  policySession = await ort.InferenceSession.create(publicAsset(activePolicy.file), { executionProviders: ["wasm"] });
-  reset();
-  setNotice(`${activePolicy.note} 点击“开始试玩”后，物理和策略均在此浏览器内运行。`);
+  // Inference yields to the UI. Finish that step before resetting/deleting data.
+  while (pendingStep) await new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function populatePolicies(robotKey, selected) {
+  $("policy").replaceChildren(...Object.entries(policies)
+    .filter(([, policy]) => (policy.robot || "go2") === robotKey)
+    .map(([key, policy]) => new Option(policy.name, key, false, key === selected)));
+}
+
+async function loadSelection(robotKey, policyKey = robots[robotKey].defaultPolicy) {
+  if (selectionBusy) return;
+  setSelectionBusy(true);
+  await stopSimulation();
+  const nextPolicy = policies[policyKey];
+  let session, visual, vfs;
+  try {
+    if (!nextPolicy || (nextPolicy.robot || "go2") !== robotKey) throw new Error("机器人与策略不匹配");
+    setStatus(`正在加载 ${robots[robotKey].name}…`);
+    const changeRobot = !model || robotKey !== activeRobotKey;
+    session = await ort.InferenceSession.create(publicAsset(nextPolicy.file), { executionProviders: ["wasm"] });
+    const metadata = session.inputMetadata[0];
+    if (metadata.shape.at(-1) !== nextPolicy.inputSize || session.outputMetadata[0].shape.at(-1) !== robots[robotKey].jointNames.length) {
+      throw new Error("策略输入输出维度与机器人配置不匹配");
+    }
+    if (changeRobot) {
+      const asset = await robotPackage(robotKey);
+      visual = buildRobot(asset);
+      vfs = new mujoco.MjVFS();
+      for (const mesh of asset.meshes) vfs.addBuffer(mesh.file, new Uint8Array(mesh.bytes));
+      createMujocoModel(terrainXml(asset.xml), terrainBoxes().length, vfs, robots[robotKey]);
+      robotVfs?.delete?.(); robotVfs = vfs; vfs = null;
+      baseSceneXml = asset.xml;
+      disposeRobot(robot);
+      robot.add(visual.group);
+      bodyNodes.clear();
+      visual.nodes.forEach((node, name) => bodyNodes.set(name, node));
+      visual = null;
+      view.camera.position.fromArray(robots[robotKey].camera);
+      view.orbit.target.set(0, 0, robots[robotKey].target);
+    }
+    const previous = policySession;
+    policySession = session; session = null;
+    activeRobotKey = robotKey; activePolicyKey = policyKey;
+    activePolicy = nextPolicy;
+    simulation.action = new Float32Array(robots[robotKey].jointNames.length);
+    controllerState.keyboardKeys.clear(); resetJoysticks(); simulation.command.fill(0);
+    configureCommandControls(); recomputeCommand();
+    $("policyName").textContent = activePolicy.name;
+    $("policyMeta").textContent = `${activePolicy.inputSize} 维策略输入 · ${simulation.action.length} 个关节动作`;
+    $("policyMeta").title = activePolicy.note;
+    $("scene").setAttribute("aria-label", `${robots[robotKey].name} MuJoCo 策略试玩画面`);
+    $("actionValues").setAttribute("aria-label", `当前 ${simulation.action.length} 维动作输出`);
+    reset(); renderTerrain(); drawActionChart();
+    setStatus("浏览器物理引擎已就绪", "ready");
+    if (previous) await previous.release();
+  } catch (error) {
+    if (session) await session.release();
+    if (visual) disposeRobot(visual.group);
+    vfs?.delete?.();
+    setStatus(`加载失败：${error.message || error}`, "error");
+    throw error;
+  } finally {
+    $("robotModel").value = activeRobotKey;
+    populatePolicies(activeRobotKey, activePolicyKey);
+    setSelectionBusy(false);
+    $("start").disabled = $("reset").disabled = !policySession;
+  }
 }
 
 function reset() {
@@ -479,7 +590,7 @@ function reset() {
   mujoco.mj_resetData(model, data);
   data.qpos[0] = 0;
   data.qpos[1] = 0;
-  data.qpos[2] = 0.42;
+  data.qpos[2] = robots[activeRobotKey].height;
   data.qpos[3] = 1;
   data.qpos[4] = data.qpos[5] = data.qpos[6] = 0;
   activePolicy.defaultPose.forEach((value, index) => { data.qpos[jointAddresses[index].qpos] = value; });
@@ -488,6 +599,10 @@ function reset() {
   simulation.action.fill(0);
   simulation.actionHistory = [];
   simulation.history = [];
+  g1State = createG1State();
+  robotDrag = null;
+  dragArrow.visible = false;
+  view.orbit.enabled = true;
   simulation.elapsed = 0;
   simulation.realTimeAccumulator = 0;
   mujoco.mj_forward(model, data);
@@ -499,6 +614,14 @@ function bodyQuaternion() {
 }
 
 function observation() {
+  if (activePolicy.robot === "g1") {
+    const gravity = new THREE.Vector3(0, 0, -1).applyQuaternion(bodyQuaternion().invert());
+    return g1Observation(activePolicy, g1State, {
+      q: jointAddresses.map((a) => data.qpos[a.qpos]), dq: jointAddresses.map((a) => data.qvel[a.dof]),
+      gyro: [data.qvel[3], data.qvel[4], data.qvel[5]], gravity: gravity.toArray(),
+      command: simulation.command, action: simulation.action,
+    });
+  }
   if (activePolicy.mode === "gait" || activePolicy.mode === "spring") return gaitObservation();
   if (activePolicy.mode === "arenaHistory") return arenaHistoryObservation();
   const quaternion = bodyQuaternion();
@@ -567,13 +690,31 @@ async function policyStep() {
   if (obs.length !== activePolicy.inputSize) throw new Error(`策略观测维度不匹配：${obs.length} / ${activePolicy.inputSize}`);
   const inputName = policySession.inputNames[0];
   const outputName = policySession.outputNames[0];
-  const output = await policySession.run({ [inputName]: new ort.Tensor("float32", obs, [1, obs.length]) });
-  simulation.action.set(output[outputName].data);
+  const feeds = { [inputName]: new ort.Tensor("float32", obs, [1, obs.length]) };
+  let output;
+  try {
+    output = await policySession.run(feeds);
+    const actions = output[outputName].data;
+    if (actions.length !== simulation.action.length || !actions.every(Number.isFinite)) throw new Error("策略输出无效");
+    simulation.action.set(activePolicy.robot === "g1" ? Float32Array.from(actions, (v) => THREE.MathUtils.clamp(v, -100, 100)) : actions);
+  } finally {
+    Object.values(feeds).forEach((tensor) => tensor.dispose());
+    Object.values(output || {}).forEach((tensor) => tensor.dispose());
+  }
   simulation.actionHistory.push(Array.from(simulation.action));
   if (simulation.actionHistory.length > 90) simulation.actionHistory.shift();
 }
 
 function applyControl() {
+  if (activePolicy.robot === "g1") {
+    const targets = g1Targets(activePolicy, simulation.action);
+    jointAddresses.forEach((address, index) => {
+      const actuator = actuatorAddresses[index];
+      const torque = activePolicy.kp[index] * (targets[index] - data.qpos[address.qpos]) - activePolicy.kd[index] * data.qvel[address.dof];
+      data.ctrl[actuator] = THREE.MathUtils.clamp(torque, model.actuator_ctrlrange[actuator * 2], model.actuator_ctrlrange[actuator * 2 + 1]);
+    });
+    return;
+  }
   jointAddresses.forEach((address, index) => {
     const target = activePolicy.defaultPose[index] + 0.25 * simulation.action[index];
     const limit = index % 3 === 2 ? 31.995 : 21.33;
@@ -713,7 +854,7 @@ function drawActionChart() {
   const samples = simulation.actionHistory;
   const palette = ["#185a91", "#4d7b4a", "#ae6c32", "#825eaa", "#b14955", "#347d8b"];
   if (samples.length > 1) {
-    for (let joint = 0; joint < 12; joint += 1) {
+    for (let joint = 0; joint < simulation.action.length; joint += 1) {
       context.beginPath();
       context.strokeStyle = palette[joint % palette.length];
       context.globalAlpha = joint < 6 ? .78 : .43;
@@ -827,8 +968,9 @@ async function tick(timestamp) {
   if (simulation.running && !pendingStep) {
     pendingStep = true;
     try {
-      while (simulation.realTimeAccumulator >= actualPolicyDt) {
+      while (simulation.running && simulation.realTimeAccumulator >= actualPolicyDt) {
         await policyStep();
+        if (!simulation.running) break;
         for (let index = 0; index < physicsStepsPerPolicy; index += 1) {
           applyControl();
           mujoco.mj_step(model, data);
@@ -846,6 +988,7 @@ async function tick(timestamp) {
     } catch (error) {
       simulation.running = false;
       $("start").textContent = "开始";
+      setStatus(`运行失败：${error.message}`, "error");
       setNotice(error.message, true);
     } finally { pendingStep = false; }
   }
@@ -1078,13 +1221,25 @@ function installKeyboardControl() {
   });
 }
 
-for (const [key, config] of Object.entries(policies)) $("policy").add(new Option(config.name, key));
-$("policy").onchange = () => loadPolicy($("policy").value).catch((error) => setNotice(error.message, true));
+for (const [key, config] of Object.entries(robots)) $("robotModel").add(new Option(config.name, key));
+populatePolicies(activeRobotKey, activePolicyKey);
+$("robotModel").onchange = () => loadSelection($("robotModel").value).catch((error) => setNotice(error.message, true));
+$("policy").onchange = () => loadSelection(activeRobotKey, $("policy").value).catch((error) => setNotice(error.message, true));
 $("start").onclick = () => {
+  if (selectionBusy || !policySession) return;
   simulation.running = !simulation.running;
   $("start").textContent = simulation.running ? "暂停" : "继续";
 };
-$("reset").onclick = () => reset();
+$("reset").onclick = async () => {
+  if (selectionBusy) return;
+  setSelectionBusy(true);
+  const resume = simulation.running;
+  await stopSimulation();
+  reset();
+  simulation.running = resume;
+  $("start").textContent = resume ? "暂停" : "开始";
+  setSelectionBusy(false);
+};
 $("cmdToggle").onclick = () => {
   const panel = $("cmdPanel");
   panel.hidden = !panel.hidden;
@@ -1151,23 +1306,18 @@ installJoystick("leftJoystick", "left");
 installJoystick("rightJoystick", "right");
 installKeyboardControl();
 
-setBootStage("加载机器人场景…", 8);
-const robotTask = buildRobot().then(() => setBootStage("机器人场景已就绪…", 38));
-const engineTask = initializeMujoco().then(() => setBootStage("MuJoCo 物理引擎已就绪…", 68));
-
-Promise.all([robotTask, engineTask])
+setBootStage("加载 MuJoCo 物理引擎…", 8);
+$("robotModel").disabled = $("policy").disabled = true;
+initializeMujoco()
   .then(() => {
-    setBootStage("加载首个策略网络…", 82);
-    return loadPolicy("handstand");
+    setBootStage("加载机器人与首个策略…", 68);
+    return loadSelection(activeRobotKey, activePolicyKey);
   })
   .then(() => {
-    $("start").disabled = false;
-    $("reset").disabled = false;
     $("cmdToggle").disabled = false;
     $("monitorToggle").disabled = false;
     $("terrainToggle").disabled = false;
     installRobotDrag();
-    setStatus("浏览器物理引擎已就绪", "ready");
     setBootStage("场景已就绪", 100);
     tick();
     requestAnimationFrame(revealScene);
@@ -1176,5 +1326,5 @@ Promise.all([robotTask, engineTask])
     console.error(error);
     setStatus("试玩区初始化失败", "error");
     setNotice(error.message || String(error), true);
-    setBootStage("初始化失败，请检查浏览器控制台", 100);
+    setBootStage(`初始化失败：${error.message || error}`, 100);
   });

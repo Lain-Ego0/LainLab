@@ -28,6 +28,7 @@
           <span>GitHub / LainLab</span>
         </a>
         <div class="top-actions">
+          <select id="robotModel" aria-label="选择机器人模型"></select>
           <select id="policy" aria-label="选择策略"></select>
           <button id="start" class="primary" disabled>开始</button>
           <button id="reset" disabled>重置</button>
@@ -80,7 +81,7 @@
         </div>
         <div class="telemetry-summary"><span>机身 <output id="bodyPosition">x 0.00 · y 0.00 · z 0.00</output></span><span>接触 <output id="contactCount">0</output> · 地形 <output id="terrainContactCount">0</output></span></div>
         <canvas id="actionChart" width="320" height="132" aria-label="策略动作输出曲线"></canvas>
-        <div id="actionValues" class="action-values" aria-label="当前十二维动作输出"></div>
+        <div id="actionValues" class="action-values" aria-label="当前关节动作输出"></div>
       </aside>
 
       <aside id="terrainPanel" class="terrain-panel" aria-label="地形编辑器" hidden>
