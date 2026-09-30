@@ -21,10 +21,10 @@ test("robot switching, G1 AMP, live reset, terrain and failed-load recovery", as
   await page.locator("#start").click();
   await page.selectOption("#robotModel", "g1");
   await ready();
-  await expect(page.locator("#policy option")).toHaveCount(1);
+  await expect(page.locator("#policy option")).toHaveCount(2);
   await expect(page.locator("#policy")).toHaveValue("g1Amp");
   await expect(page.locator("#actionValues span")).toHaveCount(29);
-  await expect(page.locator("#policy option")).toHaveText(["G1 · AMP 平地行走"]);
+  await expect(page.locator("#policy option")).toHaveText(["G1 · AMP 平地行走", "G1 · DWAQ 越障"]);
   await expect(page.locator("#clock")).toHaveText("0.00 s");
   await run();
   await page.locator("#start").click();

@@ -82,13 +82,45 @@ operation on a machine that has those sources, PyTorch and ONNX installed.
 
 ### G1
 
-G1 includes one **AMP flat-walking** policy (`g1Amp`, `policies/g1-amp.onnx`).
+G1 offers **AMP flat walking** and **DWAQ obstacle traversal** in the policy menu.
+
+**AMP flat walking** (`g1Amp`, `policies/g1-amp.onnx`):
 It uses `wbc_fsm-main/model/loco/Unitree-G1-AMP-Flat_model_30000.onnx`,
 originally called MJ AMP. The checkpoint is copied unchanged; its 384-value
 input uses four 96-value history frames in motor order. It produces 29 joint
 actions at 50 Hz, while MuJoCo runs at 500 Hz. Default poses, PD gains,
 torque-normalized action scales and command ranges follow `State_MJAmp`.
 Motor torques are limited by the robot MJCF.
+
+**DWAQ obstacle traversal** (`g1DwaqPhase`, `policies/g1-dwaq-phase.onnx`)
+comes from `G1DWAQ_Lab-main/LeggedLabDeploy/policy/g1_dwaq_phase/policy.pt`
+(SHA256 `72d082a33abcb251c9a9a03bb9a8e358d9c8f85515983ec3a0be733394fc9b17`).
+The ONNX model contains both the context encoder and actor. It consumes five
+100-value frames, oldest first, and outputs 29 actions in Isaac Lab joint order.
+The 96 proprioceptive values in each frame are followed by four phase values:
+`sin(left), sin(right), cos(left), cos(right)`, with a 0.8 s period and 0.5 offset.
+This ordering follows the training environment's `compute_current_observations`;
+the source deployment scripts interleave sin/cos differently.
+
+The original PD gains, pose, joint mapping and command ranges are recorded in
+`assets/g1/dwaq-phase.yaml`. Actions are joint offsets scaled by 0.25, with the
+same 50 Hz policy / 500 Hz physics loop as AMP. The browser reuses the G1 scene
+above. Switching policies, reset and terrain application clear history and
+restart the gait phase. Initial history repeats the standing observation, as
+in the source Sim2Sim runner. Start around 0.3 m/s with low stairs; this is a
+blind policy and does not receive a terrain map or plan routes around obstacles.
+
+To regenerate the ONNX model in a Python environment with PyTorch, ONNX and
+ONNX Runtime installed:
+
+```bash
+python scripts/import-g1-dwaq.py /path/to/G1DWAQ_Lab-main/LeggedLabDeploy/policy/g1_dwaq_phase/policy.pt
+```
+
+The importer validates the 500-to-29 interface and compares ONNX against
+TorchScript on 16 inputs. Redistribution terms are in `public/g1-dwaq-LICENSE`.
+Browser regression tests cover policy switching, failed model loads, reset,
+and traversal of four 6 cm steps using the same scene and controls as the UI.
 
 W/S, A/D, Q/E and the virtual joysticks control the policy. Start with low
 speeds using the CMD panel.
@@ -107,7 +139,7 @@ npm run build
 This offline import copies the AMP ONNX file unchanged; it does not train
 or re-export the policy. Run `npm test` for history and action-scaling checks.
 
-Browser checks cover G1 AMP, robot switching during playback, reset, terrain
+Browser checks cover both G1 policies, robot switching during playback, reset, terrain
 recompilation, failed-load recovery, mobile controls, and development asset refresh:
 
 ```bash

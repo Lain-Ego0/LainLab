@@ -707,7 +707,7 @@ function observation() {
     return g1Observation(activePolicy, g1State, {
       q: jointAddresses.map((a) => data.qpos[a.qpos]), dq: jointAddresses.map((a) => data.qvel[a.dof]),
       gyro: [data.qvel[3], data.qvel[4], data.qvel[5]], gravity: gravity.toArray(),
-      command: simulation.command, action: simulation.action,
+      command: simulation.command, action: simulation.action, elapsed: simulation.elapsed,
     });
   }
   if (activePolicy.mode === "gait" || activePolicy.mode === "spring") return gaitObservation();
